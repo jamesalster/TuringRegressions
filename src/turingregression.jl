@@ -1,4 +1,9 @@
+"""
+Flags describing model structure.
 
+Tracks which components are present: intercept, fixed effects, 
+random effects, and whether sampling weights are used.
+"""
 struct ModelInfo
     has_intercept::Bool
     has_fixed_effects::Bool
@@ -6,6 +11,19 @@ struct ModelInfo
     weighted::Bool
 end
 
+"""
+A Bayesian regression model fitted with Turing.jl.
+
+Stores the formula, data, priors, and MCMC samples. The type parameter 
+`T` is the response distribution (Normal, Bernoulli, TDist, etc).
+
+# Fields
+- `formula`: The regression formula
+- `model`: Compiled Turing model function
+- `prior`: Prior distributions for parameters
+- `samples`: MCMC chains (nothing until `fit!` is called)
+- `parameters`: Standardized parameter draws
+"""
 mutable struct TuringRegression{T<:Distribution}
     formula::FormulaTerm
     model::Function
@@ -22,9 +40,30 @@ mutable struct TuringRegression{T<:Distribution}
     parameters::Union{Nothing,DimArray}
 end
 
-## Main model fit function
+"""
+    turing_glm(formula, data, family; priors, weights, show_code)
+
+Fit a Bayesian regression model.
+
+Data is automatically standardized. Supply priors scaled for 
+standardized predictors (mean=0, sd=1).
+
+# Arguments
+- `formula`: Regression formula (e.g., `@formula(y ~ x1 + x2)`)
+- `data`: DataFrame with response and predictors
+- `family`: Response distribution (Normal, Bernoulli, TDist, etc.)
+- `priors`: Prior distributions (defaults provided if omitted)
+- `weights`: Optional sampling weights
+- `show_code`: Print the generated Turing model code
+
+# Example
+```julia
+model = turing_glm(@formula(mpg ~ hp + wt), mtcars, Normal)
+fit!(model)
+```
+"""
 function turing_glm(formula::FormulaTerm, 
-    data, 
+    data::DataFrame, 
     family::Type{<:Distribution}, 
     priors::RegressionPrior=default_prior(family), 
     weights::Union{Nothing, Vector{Float64}}=nothing,
@@ -33,7 +72,6 @@ function turing_glm(formula::FormulaTerm,
     # Get data arrays
     y = data_response(formula, data)
     X = data_fixed_effects(formula, data)
-    #z = data_random_effects(formula, data)
 
     # Make model info
     model_info = ModelInfo(
@@ -53,7 +91,6 @@ function turing_glm(formula::FormulaTerm,
         y,
         X,
         nothing,
-        #z,
         weights,
         get_fixef_names(formula, data),
         nothing,
@@ -63,7 +100,22 @@ function turing_glm(formula::FormulaTerm,
     )
 end
 
-## Method for y and X
+"""
+    turing_glm(y, X, family; names, kwargs...)
+
+Fit a model using raw arrays instead of a formula.
+
+# Arguments
+- `y`: Response vector
+- `X`: Predictor matrix
+- `family`: Response distribution
+- `names`: Variable names (auto-generated if omitted)
+
+# Example
+```julia
+model = turing_glm(y, X, Normal, names=[:age, :income])
+```
+"""
 function turing_glm(
     y::AbstractVector,
     X::AbstractArray,
@@ -77,18 +129,20 @@ function turing_glm(
         X_names = ntuple(i -> Symbol(names[i]), length(names))
     end
     table = (; NamedTuple{X_names}(eachcol(X))..., NamedTuple{(:y,)}([y])...)
-    #TODO improve
     formula = "y ~ " * join([string.(term) for term in X_names], " + ")
     formula_obj = eval(Meta.parse("@formula($formula)"))
     return turing_glm(formula_obj, table, T; kwargs...)
 end
 
+"""
+    show(io, TR::TuringRegression)
 
+Print a summary of the model: family, formula, priors, and sample status.
+"""
 function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
-    # Define styles once at the top
     header_style = crayon"bold underline"
     label_style = crayon"bold !underline"
-    normal_style = crayon"reset"  # or just use no crayon
+    normal_style = crayon"reset"
 
     println(io, header_style, "TuringRegression Model")
 
@@ -141,17 +195,21 @@ end
 #### Methods ####
 
 """
-    fit!(TR::TuringRegression; sampler=NUTS(), parallel=MCMCThreads(), N=2000, nchains=4, quiet=true, kwargs...)
+    fit!(TR::TuringRegression; sampler, parallel, N, nchains, quiet, kwargs...)
 
-Fit the model using MCMC sampling. Updates the model in-place with results.
-    Kwargs are passed to Turing's `sample()` function.
+Run MCMC sampling to fit the model. Updates the model in-place.
 
 # Arguments
-- `sampler`: MCMC sampler (default: NUTS())
-- `parallel`: Parallelization method (default: MCMCThreads())
-- `N`: Number of samples per chain
-- `nchains`: Number of parallel chains
-- `quiet`: Suppress sampling output
+- `sampler`: MCMC algorithm (default: NUTS())
+- `parallel`: How to parallelize chains (default: MCMCThreads())
+- `N`: Samples per chain (default: 2000)
+- `nchains`: Number of chains (default: 4)
+- `quiet`: Hide sampling progress (default: true)
+
+# Example
+```julia
+fit!(model, N=1000, nchains=2)
+```
 """
 function fit!(
     TR::TuringRegression;
@@ -178,8 +236,7 @@ function fit!(
         TR.samples = sample(model_with_data, sampler, parallel, N, nchains; kwargs...)
     end
 
-    # Recover the standardised parametes from generated quantities
-    # bit messy
+    # Recover the standardised parameters from generated quantities
     gq = generated_quantities(model_with_data, TR.samples)
     param_names = collect(keys(first(gq)))
     arrays = Vector{Array{Float64, 3}}()
@@ -194,7 +251,6 @@ function fit!(
             push!(param_keys, param)
         end
     end
-    param_array = vcat(arrays...) #along the first dimension
+    param_array = vcat(arrays...)
     TR.parameters = DimArray(param_array, (Dim{:param}(param_keys), Dim{:draw}, Dim{:chain}))
 end
-

@@ -1,4 +1,5 @@
 
+#### Building blocks of the model
 
 # prior
 function _intercept(prior::Distribution)
@@ -22,6 +23,7 @@ function _random_effects(prior::Distribution)
     end
 end
 
+# prior
 function _auxiliary_parameter(prior::Distribution, family::Type{<:Distribution})
     if family == Normal
         quote
@@ -37,7 +39,7 @@ function _auxiliary_parameter(prior::Distribution, family::Type{<:Distribution})
     end
 end
 
-# model
+# linear model
 function _linear_model(has_intercept::Bool, has_fixed_effects::Bool, has_random_effects::Bool)
 
     # Get terms we need
@@ -80,6 +82,7 @@ function _likelihood(family::Type{<:Distribution})
     end
 end
 
+# weighted likelihood
 function _weighted_likelihood(family::Type{<:Distribution})
     if family == Normal
         quote
@@ -102,6 +105,7 @@ function _weighted_likelihood(family::Type{<:Distribution})
     end
 end
 
+# data standardisation
 function _standardise_data(family::Type, has_fixed_effects::Bool)
     # Empty quote
     body = Expr(:block)
@@ -133,7 +137,7 @@ function _standardise_data(family::Type, has_fixed_effects::Bool)
     return body
 end
 
-
+# parameter scaling
 function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::Bool, has_intercept::Bool)
     # Empty quote
     body = Expr(:block) 
@@ -158,14 +162,13 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
 
     # add return line to body as a named tuple
     return_tuple = Expr(:tuple, return_list...)
-    return_sTRt = Expr(:return, return_tuple)
-    push!(body.args, return_sTRt)
+    return_stmt = Expr(:return, return_tuple)
+    push!(body.args, return_stmt)
 
     return body
 end
-    
 
-# Call the model body functions and handle some logic
+#### Main function to assemble the model code
 function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, prior::RegressionPrior)
 
     # Empty quote
@@ -205,7 +208,7 @@ function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, p
     return body
 end
 
-
+#### Wrapper function for the above, to handle some additional logic
 function construct_model(family::Type{<:Distribution}, model_info::ModelInfo, prior::RegressionPrior, show_code::Bool=false)
 
     #handle logic here

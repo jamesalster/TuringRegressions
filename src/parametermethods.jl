@@ -1,6 +1,6 @@
 
 
-# Get the parameter names of a model
+# Internal function to get the parameter names of a model
 function _get_parameter_names(TR::TuringRegression)::Vector{Symbol}
     return lookup(dims(TR.parameters)[1]).data
 end

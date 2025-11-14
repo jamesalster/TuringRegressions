@@ -1,5 +1,5 @@
 """
-    predict(TR::TuringRegression, X::AbstractArray, fun=nothing; type=:posterior, transform=TR.standardized, std=false, kwargs...)
+    predict(TR::TuringRegression, X::AbstractArray, fun=nothing; type=:posterior, kwargs...)
     predict(TR::TuringRegression, fun=nothing; kwargs...)
 
 Generate predictions for new data or fitted data.
@@ -8,8 +8,6 @@ Generate predictions for new data or fitted data.
 - `X`: Design matrix for predictions (optional, uses fitted data if omitted)
 - `fun`: Optional function to apply across draws
 - `type`: Type of prediction (:posterior, :epred, :linpred)
-- `transform`: Standardize data before feeding to model? 
-- `std`: Return predictions at the standardized scale? 
 - `drop_warmup`: Number of warmup samples to drop from each chain
 - `n_draws`: Number of draws to keep (-1 for all post-warmup)
 - `collapse`: Whether to collapse chains into single dimension

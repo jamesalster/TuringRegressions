@@ -1,11 +1,9 @@
 
 # TuringRegressions.jl
 
-A simple wrapper around [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/) for Bayesian regression.
+An alternative and more fully featured version of [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/) for Bayesian regression.
 
 Uses DimArrays for outputs, allowing easy indexing.
-
-***Important*** initial testing shows that the TuringGLM implementation performs less well when the data is not standardized. For this reason, all fits are handled at a standardized level, and estimates are converted back to the original linear model scale by default. Outcomes are also standardized if the family is Normal or TDist. See the docstrings for how to access the standardized results, or to override this.
 
 ## Installation
 
@@ -149,11 +147,12 @@ Parameter extraction functions accept:
 
 ## Thanks
 
-This package simply wraps [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/) with a streamlined interface. Turing and TuringGLM do all the heavy lifting. It also uses the power of [DimensionalData.jl](https://rafaqz.github.io/DimensionalData.jl/stable/) for its outputs.
+This pacakge was heavily inspired by and uses small snippets of code from TuringJL
+It also uses the power of [DimensionalData.jl](https://rafaqz.github.io/DimensionalData.jl/stable/) for its outputs.
 
 ## TODO
 
-* Add support for random effects
-* Revise readme and docs so not written by LLM
-* Add stronger testing for model outputs, and tests for plots
+* Add full support for random effects
+* redo docs to reflect changes
+* redo all the tests
 

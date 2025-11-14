@@ -56,7 +56,8 @@ export TuringRegression,
     loo_compare,
     lineribbon,
     calculate_metrics,
-    default_metrics
+    default_metrics,
+    default_prior
 
 function __init__()
     #Makie required for band

@@ -1,8 +1,11 @@
 
+#### Functions to extract information from the formula 
+
 function data_response(formula::FormulaTerm, data::D) where {D}
     return response(formula, data)
 end
 
+# From TuringGLM
 function data_fixed_effects(formula::FormulaTerm, data::D) where {D}
     if has_ranef(formula)
         X = MixedModels.modelmatrix(MixedModel(formula, data))
@@ -27,8 +30,8 @@ function has_intercept(formula) # allow implicit intercepts
     true  # implicit intercept when no ConstantTerm found
 end
 
+# From TuringGLM
 function has_ranef(formula)
-    # From TuringGLM
     if formula.rhs isa StatsModels.Term
         return false
     else
@@ -44,4 +47,5 @@ function get_fixef_names(formula, data)
         return coefs
     end
 end
+
 

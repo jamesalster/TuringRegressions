@@ -216,10 +216,10 @@ function construct_model(family::Type{<:Distribution}, model_info::ModelInfo, pr
 
     # argument names
     args = [:y, :X]
-    eval(model_info).has_random_effects && push!(args, :z)
-    eval(model_info).weighted && push!(args, :weights)
+    model_info.has_random_effects && push!(args, :z)
+    model_info.weighted && push!(args, :weights)
     
-    # build modl code
+    # build model code
     model_code = quote
         @model function turing_regression($(args...))
             nobs, npredictors = size(X)
@@ -227,9 +227,10 @@ function construct_model(family::Type{<:Distribution}, model_info::ModelInfo, pr
         end
     end
     
+    model_code_str = MacroTools.prettify(model_code)
     if show_code
-        println("Generated model:\n $(MacroTools.prettify(model_code))")
+        println("Generated model:\n $(model_code_str)")
     end
 
-    return eval(model_code)
+    return eval(model_code), model_code_str
 end

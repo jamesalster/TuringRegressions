@@ -36,6 +36,7 @@ mutable struct TuringRegression{T<:Distribution}
     X_names::Union{Nothing,Vector{String}}
     z_names::Union{Nothing,Vector{String}}
     modelinfo::ModelInfo
+    modelcode::Expr
     samples::Union{Nothing,Chains}
     parameters::Union{Nothing,DimArray}
 end
@@ -81,7 +82,7 @@ function turing_glm(formula::FormulaTerm,
         !isnothing(weights)
     )
 
-    model_obj = construct_model(family, model_info, priors, show_code)
+    model_obj, model_code = construct_model(family, model_info, priors, show_code)
 
     return TuringRegression{family}(
         formula,
@@ -95,6 +96,7 @@ function turing_glm(formula::FormulaTerm,
         get_fixef_names(formula, data),
         nothing,
         model_info,
+        model_code,
         nothing,
         nothing
     )
@@ -253,4 +255,6 @@ function fit!(
     end
     param_array = vcat(arrays...)
     TR.parameters = DimArray(param_array, (Dim{:param}(param_keys), Dim{:draw}, Dim{:chain}))
+
+    return TR
 end

@@ -169,8 +169,13 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
         println(io, normal_style, clean_prior_string(string(pr.random_effects)))
     end
 
-    if T ∈ [Normal, TDist]
-        print(io, normal_style, "  Auxiliary: ")
+    if T ∈ [TDist]
+        print(io, normal_style, "  Error Variance: ")
+        println(io, normal_style, "Exponential(θ=1.0)")
+        print(io, normal_style, "  Auxiliary (ν): ")
+        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
+    elseif T ∈ [Normal]
+        print(io, normal_style, "  Auxiliary (σ): ")
         println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
     end
 

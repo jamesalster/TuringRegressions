@@ -45,7 +45,7 @@ export TuringRegression,
     parameter_names,
     get_parameters,
     parameters,
-    coefs,
+    coef,
     fixef,
     internals,
     outcome,
@@ -57,7 +57,8 @@ export TuringRegression,
     lineribbon,
     calculate_metrics,
     default_metrics,
-    default_prior
+    default_prior,
+    pseudo_r2
 
 function __init__()
     #Makie required for band

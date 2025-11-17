@@ -18,7 +18,7 @@ end
 Get parameter names with friendly labels replacing generic β indices.
 """
 function parameter_names(TR::TuringRegression, params=_get_parameter_names(TR))
-    rename_dict = Dict(Symbol("β[$i]") => nm for (i, nm) in enumerate(TR.X_names))
+    rename_dict = Dict(Symbol("β[$i]") => Symbol(nm) for (i, nm) in enumerate(TR.X_names))
     return [get(rename_dict, p, p) for p in params]
 end
 
@@ -113,8 +113,7 @@ function internals(
     arr = process_draws(arr; kwargs...)
     size(arr, 1) == 0 &&
         @warn "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
-    return arr
-    params = isnothing(fun) ? params : mapslices(fun, params; dims=1)
+    params = isnothing(fun) ? arr : mapslices(fun, arr; dims=1)
     return dropdims ? drop_single_dims(params) : params
 end
 
@@ -126,7 +125,7 @@ Get coefficient point estimates using specified summary function.
 # Arguments
 - `fun`: Summary function to apply (default: median)
 """
-function coefs(TR::TuringRegression, fun::Function=median; kwargs...)
+function coef(TR::TuringRegression, fun::Function=median; kwargs...)
     @info "Reducing with function: $(fun)"
     return fixef(TR, fun; kwargs...)
 end

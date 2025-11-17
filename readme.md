@@ -109,7 +109,7 @@ pp_check_dens_overlay(mod)
 * `parameters(model, fun)` - All parameters
 * `fixef(model, fun)` - Fixed effects  
 * `internals(model, fun)` - Sampling information 
-* `coefs(model, fun)` - Point estimates
+* `coef(model, fun)` - Point estimates
 * `get_parameters(model, params)` - Specific parameters
 
 ### Predictions

@@ -65,7 +65,7 @@ function parameters(
     TR::TuringRegression, fun::Union{Nothing,Function}=nothing; dropdims=true, kwargs...
 )
     params = get_parameters(TR, _get_parameter_names(TR); kwargs...)
-    params = isnothing(fun) ? params : mapslices(fun, params; dims=1)
+    params = isnothing(fun) ? params : mapslices(fun, params; dims=2)
     return dropdims ? drop_single_dims(params) : params
 end
 
@@ -86,7 +86,7 @@ function fixef(
 )
     fixef_names = [:α, [Symbol("β[$i]") for i in 1:size(TR.X, 2)]...]
     params = get_parameters(TR, fixef_names; kwargs...)
-    params = isnothing(fun) ? params : mapslices(fun, params; dims=1)
+    params = isnothing(fun) ? params : mapslices(fun, params; dims=2)
     return dropdims ? drop_single_dims(params) : params
 end
 
@@ -113,7 +113,7 @@ function internals(
     arr = process_draws(arr; kwargs...)
     size(arr, 1) == 0 &&
         @warn "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
-    params = isnothing(fun) ? arr : mapslices(fun, arr; dims=1)
+    params = isnothing(fun) ? arr : mapslices(fun, arr; dims=2)
     return dropdims ? drop_single_dims(params) : params
 end
 

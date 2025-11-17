@@ -48,7 +48,7 @@ function _linear_model(has_intercept::Bool, has_fixed_effects::Bool, has_random_
         push!(terms, :α)
     end
     if has_fixed_effects 
-        push!(terms, :(X * β))
+        push!(terms, :(X_scaled * β))
     end
     if has_random_effects 
         push!(terms, :(τ .* getindex.((zⱼ,), idxs)))

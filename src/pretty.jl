@@ -66,12 +66,9 @@ function pretty(
     #metrics
     drop_warmup = size(TR.samples, 1) < 400 ? 0 : 200
     metric_tabs = map(
-        f -> default_metrics(TR, f; drop_warmup=drop_warmup, dropdims=false), funs_all
+        f -> default_metrics(TR, f; drop_warmup=drop_warmup), funs_all
     )
     metric_tab = hcat(metric_tabs...)
-    metric_tab = set(metric_tab, Dim{:draw} => Dim{:statistic})
-    metric_tab = set(metric_tab, Dim{:statistic} => DimensionalData.Dimensions.Categorical)
-    metric_tab = set(metric_tab, Dim{:statistic} => func_names_all)
 
     # show
     show(io, TR; warnings=false)
@@ -95,10 +92,10 @@ function pretty(
     )
     pretty_table(
         io,
-        parent(metric_tab);
+        Matrix(metric_tab);
         title="Prediction Metrics",
-        header=Array(dims(metric_tab, 2)),
-        row_labels=Array(dims(metric_tab, 1)),
+        header=func_names_all,
+        row_labels=Array(dims(first(metric_tabs), 1)),
         row_label_column_title="Metric",
         formatters=(ft_printf("%5.3f")),
         default_options...,

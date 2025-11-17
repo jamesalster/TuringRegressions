@@ -83,15 +83,11 @@ function calculate_metrics(
     metric_names = AreaUnderCurve ∈ metrics ? vcat(metric_names, "AreaUnderCurve") : metric_names
     metric_names = pseudo_r2 ∈ metrics ? vcat(metric_names, "Pseudo r2") : metric_names
 
-    #Broken quick method so we need to do this to set dimensions sadly
     if ndims(metric_table) == 2
         metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}))
     elseif ndims(metric_table) == 3
         metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}, Dim{:chain}))
     end
-    #metric_table = set(metric_table, Dim{:row} => Dim{:metric})
-    #metric_table = set(metric_table, Dim{:metric} => DimensionalData.Dimensions.Categorical)
-    #metric_table = set(metric_table, Dim{:metric} => [metric_names...])
 
     metric_table = isnothing(fun) ? metric_table : mapslices(fun, metric_table; dims=2)
     return dropdims ? drop_single_dims(metric_table) : metric_table

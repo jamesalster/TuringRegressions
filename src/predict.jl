@@ -15,7 +15,7 @@ Generate predictions for new data or fitted data.
 """
 function predict(
     TR::TuringRegression{T},
-    X::AbstractArray,
+    X::Matrix,
     fun::Union{Nothing,Function}=nothing;
     type::Symbol=:posterior,
     kwargs...,
@@ -36,6 +36,11 @@ end
 
 function predict(TR::TuringRegression, fun::Union{Nothing,Function}=nothing; kwargs...)
     return predict(TR, TR.X, fun;  kwargs...)
+end
+
+function predict(TR::TuringRegression{T}, new_data::DataFrame, fun::Union{Nothing, Function}=nothing; kwargs...) where {T}
+    X = data_fixed_effects(TR.formula, new_data)
+    return predict(TR, X, fun; kwargs...)
 end
 
 #### Internal functions ####

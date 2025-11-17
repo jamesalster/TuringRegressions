@@ -11,7 +11,7 @@ function process_draws(
     )
     arr = n_draws > 0 ? arr[:, 1:n_draws, :] : arr #select draws
     if collapse
-        return transpose(mergedims(arr, (:draw, :chain) => :draw))
+        return mergedims(arr, (:draw, :chain) => :draw)
     else
         return arr
     end

@@ -43,25 +43,30 @@ function calculate_metrics(
 
     # Special handling for bernoulli
     if T == Bernoulli
-        with_auc = AreaUnderCurve() ∈ metrics
 
-        # handle AUC
-        auc_tab = with_auc ? _get_auc(preds, y) : []
+        # handle metrics requiring a numeric outcome
+        numeric_metric_table = zeros(0, size(preds)[2:end]...)
+        if AreaUnderCurve ∈ metrics
+            numeric_metric_table = cat(numeric_metric_table, _get_auc(preds, y); dims = 1)
+        end
+        println(numeric_metric_table)
+        if pseudo_r2 ∈ metrics
+            numeric_metric_table = cat(numeric_metric_table, _calculate_metric(pseudo_r2, preds, y); dims = 1)
+        end
 
         # convert to category for remaining metrics
         preds = rebuild(preds, categorical(parent(preds) .> threshold))
         y = rebuild(y, categorical(parent(y) .== 1))
 
         # build table
-        metrics2 = filter(x -> x != auc, metrics)
+        metrics2 = filter(x -> x ∉ [auc, pseudo_r2], metrics)
         metric_table = cat(
             map(metric -> _calculate_metric(metric, preds, y), metrics2)...; dims=1
         )
 
         # add AUC back in if we need
-        if with_auc
-            metric_table =
-                !isempty(metric_table) ? cat(metric_table, auc_tab; dims=1) : auc_tab
+        if size(numeric_metric_table, 1) > 0
+            metric_table = !isempty(metric_table) ? cat(metric_table, numeric_metric_table; dims=1) : numeric_metric_table
         end
     else
         # Calculate table
@@ -69,19 +74,24 @@ function calculate_metrics(
             map(metric -> _calculate_metric(metric, preds, y), metrics)...; dims=1
         )
         metrics2 = metrics
-        with_auc = false
     end
 
     #clean names, messy with AUC
     metric_names = replace.(
         string.(metrics2), r"\(.*\)" => "", "LPLoss(p = 1)" => "MeanAbsoluteError"
     )
-    metric_names = with_auc ? vcat(metric_names, "AreaUnderCurve") : metric_names
+    metric_names = AreaUnderCurve ∈ metrics ? vcat(metric_names, "AreaUnderCurve") : metric_names
+    metric_names = pseudo_r2 ∈ metrics ? vcat(metric_names, "Pseudo r2") : metric_names
 
     #Broken quick method so we need to do this to set dimensions sadly
-    metric_table = set(metric_table, Dim{:row} => Dim{:metric})
-    metric_table = set(metric_table, Dim{:metric} => DimensionalData.Dimensions.Categorical)
-    metric_table = set(metric_table, Dim{:metric} => [metric_names...])
+    if ndims(metric_table) == 2
+        metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}))
+    elseif ndims(metric_table) == 3
+        metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}, Dim{:chain}))
+    end
+    #metric_table = set(metric_table, Dim{:row} => Dim{:metric})
+    #metric_table = set(metric_table, Dim{:metric} => DimensionalData.Dimensions.Categorical)
+    #metric_table = set(metric_table, Dim{:metric} => [metric_names...])
 
     metric_table = isnothing(fun) ? metric_table : mapslices(fun, metric_table; dims=2)
     return dropdims ? drop_single_dims(metric_table) : metric_table
@@ -96,6 +106,7 @@ function _get_default_metrics(TR::TuringRegression{T}) where {T}
             TruePositiveRate(; levels=[false, true]),
             TrueNegativeRate(; levels=[false, true]),
             auc,
+            pseudo_r2
         ]
     else
         return [rsq, rmse, mae]
@@ -129,4 +140,18 @@ function _get_auc(preds::DimArray, y::DimArray)
         )
         return auc(preds_as_distribution, y_categ)
     end
+end
+
+# Internal pseudoR2 implementation, McFadden method
+function pseudo_r2(preds, y)
+    y_num = convert(Vector{Float64}, y)
+    # Log-likelihood of full model
+    ll_full = sum(y_num .* log.(preds) .+ (1 .- y_num) .* log.(1 .- preds))
+    
+    # Log-likelihood of null model (intercept only)
+    p_null = mean(y_num)
+    ll_null = sum(y_num .* log(p_null) .+ (1 .- y_num) .* log(1 - p_null))
+    
+    # McFadden's R²
+    return 1 - (ll_full / ll_null)
 end

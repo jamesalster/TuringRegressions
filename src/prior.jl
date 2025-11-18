@@ -46,6 +46,8 @@ function default_prior(family::Type{<:Distribution})::RegressionPrior
             overall_defaults...,
             Gamma(2, 0.1)
         )
+    else
+        error("No default prior implemented for model family: $(string(family))")
     end
 end
 

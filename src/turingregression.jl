@@ -70,6 +70,10 @@ function turing_glm(formula::FormulaTerm,
     weights::Union{Nothing, Vector{Float64}}=nothing,
     show_code::Bool=false) 
 
+    if family ∉ [Normal, TDist, Bernoulli]
+        error("Family: $(string(family)) not supported.")
+    end
+
     # Get data arrays
     y = data_response(formula, data)
     X = data_fixed_effects(formula, data)

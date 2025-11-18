@@ -243,23 +243,33 @@ function fit!(
         TR.samples = sample(model_with_data, sampler, parallel, N, nchains; kwargs...)
     end
 
-    # Recover the standardised parameters from generated quantities
+    # Recover standardised parameters from generated quantities - a bit of help from claude
     gq = generated_quantities(model_with_data, TR.samples)
     param_names = collect(keys(first(gq)))
-    arrays = Vector{Array{Float64, 3}}()
-    param_keys = Vector{Symbol}()
-    for param in param_names
-        if param === :β
-            gq_array = stack([x[param] for x in gq])
-            push!(arrays, gq_array)
-            push!(param_keys, Symbol.(["β[$i]" for i in 1:size(gq_array, 1)])...)
-        else  
-            push!(arrays, stack([[x[param]] for x in gq]))
-            push!(param_keys, param)
-        end
+    param_names = :α ∈ param_names ? [:α; filter(!=(:α), param_names)] : param_names
+
+    
+    # Extract all parameters in one pass
+param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
+                  for p in param_names)
+
+arrays = []
+labels = Symbol[]
+for param in param_names
+    if param === :β
+        arr = stack(param_dict[param])  # (2, 1000, 4)
+        push!(arrays, arr)
+        append!(labels, [Symbol("β[$i]") for i in 1:size(arr, 1)])
+    else
+        arr = param_dict[param]  # Already (1000, 4)
+        push!(arrays, reshape(arr, 1, size(arr)...))  # (1, 1000, 4)
+        push!(labels, param)
     end
-    param_array = vcat(arrays...)
-    TR.parameters = DimArray(param_array, (Dim{:param}(param_keys), Dim{:draw}, Dim{:chain}))
+end
+
+    println(size.(arrays))
+    println(labels)
+TR.parameters = DimArray(vcat(arrays...), (Dim{:param}(labels), Dim{:draw}, Dim{:chain}))
 
     return TR
 end

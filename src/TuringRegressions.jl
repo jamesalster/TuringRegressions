@@ -3,21 +3,22 @@ module TuringRegressions
 
 using Reexport
 using Requires: @require
+
 @reexport using DimensionalData
 @reexport using LogExpFunctions: logit, logistic
 @reexport using Distributions
 @reexport using MixedModels: @formula
-using StatsModels 
+
+using StatsModels
 using Turing
 using PrettyTables
-using StatisticalMeasures
-using ParetoSmooth
-using LazyArrays
-using MacroTools
 using MixedModels
 using Random
+using StatisticalMeasures
+using ParetoSmooth
 using MCMCDiagnosticTools
 
+using MacroTools: prettify
 using Suppressor: @suppress
 using StatsBase: mean, std
 using DataFrames: DataFrame

@@ -77,7 +77,9 @@ function _likelihood(family::Type{<:Distribution})
         end
     elseif family == Bernoulli
         quote
-            Turing.@addlogprob! logpdf(arraydist(LazyArray(@~ BernoulliLogit.(μ))), y_scaled)
+            for n in 1:nobs
+                Turing.@addlogprob! logpdf(BernoulliLogit(μ[n]), y[n]) #Not scaled
+            end
         end
     end
 end

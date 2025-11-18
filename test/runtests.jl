@@ -22,6 +22,57 @@ titanic_expanded.Survived = titanic_expanded.Survived .== "Yes"
 
 @warn "No tests yet implemented for plots"
 
+@testset "Vs. GLM" begin
+    mod1 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal);
+    Random.seed!(123)
+    fit!(mod1, N=15000)
+    mod_glm = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars);
+    @test isapprox(
+        GLM.coef(mod_glm), coef(mod1, median; drop_warmup=2000), atol=0.025
+    )
+    @test isapprox(
+        GLM.predict(mod_glm), predict(mod1, median; drop_warmup=2000, type=:epred), atol=0.1
+    )
+
+    #mod2 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson; priors=prior);
+    #Random.seed!(123)
+    #fit!(mod2, N=15000);
+    #mod2_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink());
+    #@test isapprox(
+    #    GLM.coef(mod2_glm), parameters(mod2, median; drop_warmup=2000)[1:3], atol=0.025
+    #)
+    #@test isapprox(
+    #    GLM.predict(mod2_glm),
+    #    predict(mod2, median; drop_warmup=2000, type=:epred),
+    #    atol=0.2,
+    #)
+
+    #mod3 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial; priors=prior);
+    #Random.seed!(123)
+    #fit!(mod3, N=15000);
+    #mod3_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink());
+    #@test isapprox(
+    #    GLM.coef(mod3_glm), parameters(mod3, median; drop_warmup=2000)[1:3], atol=0.025
+    #)
+    #@test isapprox(
+    #    GLM.predict(mod3_glm), predict(mod3, median; drop_warmup=2000, type=:epred), atol=2
+    #)
+
+    Random.seed!(123)
+    mod4 = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic_expanded, Bernoulli);
+    fit!(mod4, N=15000);
+    mod4_glm = GLM.glm(@formula(Survived ~ Class + Sex + Age), titanic_expanded, Binomial(), GLM.LogitLink());
+    GLM.coef(mod4_glm)
+    @test isapprox(
+        GLM.coef(mod4_glm), parameters(mod4, median; drop_warmup=2000), atol=0.05
+    )
+    @test isapprox(
+        GLM.predict(mod4_glm),
+        predict(mod4, median; drop_warmup=2000, type=:epred),
+        atol=0.05,
+    )
+end
+
 #@testset "Model Creation" begin
 #    mod1 = @test_nowarn turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal);
 #
@@ -117,58 +168,57 @@ titanic_expanded.Survived = titanic_expanded.Survived .== "Yes"
 model = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, TDist);
 model_empty = deepcopy(model);
 model = @suppress fit!(model);
-#mod_notstd = @suppress fit!(mod_notstd, N=50, nchains=1);
 #mod_count = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson);
 #fit!(mod_count);
- 
+
 @testset "Parameter Methods" begin
     default_samples = 2000
     default_chains = 4
     default_dropwarmup = 200
     expected_out = (default_samples - default_dropwarmup) * default_chains
 
-    param_names = [ :Cyl, :Disp, :α, :σ, :ν]
+    param_names = [ :α, :Cyl, :Disp, :σ, :ν]
     @test parameter_names(model) == param_names
 
     # Test the main get_parameters method
     pars = [:α, :σ, :ν]
     ps = get_parameters(model, pars)
     @test ps isa DimArray
-    @test size(ps) == (expected_out, length(pars))
-    @test Array(dims(ps, 2)) == string.(pars)
+    @test size(ps) == (length(pars), expected_out)
+    @test Array(dims(ps, 1)) == string.(pars)
     expected_idx = vec([
         (i, j) for i in (default_dropwarmup + 1):default_samples, j in 1:default_chains
     ])
-    @test Array(dims(ps, 1)) == expected_idx
+    @test Array(dims(ps, 2)) == expected_idx
 
     # Test kwargs
     @test size(get_parameters(model, pars; drop_warmup=0)) ==
-        (default_samples * default_chains, length(pars))
+        (length(pars), default_samples * default_chains)
     @test size(get_parameters(model, pars; drop_warmup=800)) ==
-        ((default_samples - 800) * default_chains, length(pars))
-    @test size(get_parameters(model, pars; n_draws=50)) == (50 * default_chains, length(pars))
-    @test size(get_parameters(model, pars; n_draws=50)) == (50 * default_chains, length(pars))
-    @test size(get_parameters(model, pars; n_draws=50)) == (50 * default_chains, length(pars))
+        (length(pars), (default_samples - 800) * default_chains)
+    @test size(get_parameters(model, pars; n_draws=50)) == (length(pars), 50 * default_chains)
+    @test size(get_parameters(model, pars; n_draws=50)) == (length(pars), 50 * default_chains)
+    @test size(get_parameters(model, pars; n_draws=50)) == (length(pars), 50 * default_chains)
     @test size(get_parameters(model, pars; collapse=false)) ==
         ( length(pars), default_samples - default_dropwarmup, default_chains)
     @test_throws ErrorException get_parameters(model, pars; drop_warmup=2000, n_draws=5000)
 
     # Test derivative methods with funciton and kwargs
     pars = parameters(model)
-    @test pars == get_parameters(model, [Symbol("β[1]"), Symbol("β[2]"), :α, :σ, :ν])
-    @test isapprox(parameters(model, mean), transpose(mean(parameters(model), dims=1)))
+    @test pars == get_parameters(model, [:α, Symbol("β[1]"), Symbol("β[2]"), :σ, :ν])
+    @test isapprox(parameters(model, mean), mean(parameters(model), dims=2))
     @test ndims(parameters(model, median; dropdims=false)) == 2
     @test ndims(parameters(model, median; collapse=false, dropdims=false)) == 3
 
     # Test other methods more simply
     @test fixef(model) == get_parameters(model, [:α, Symbol("β[1]"), Symbol("β[2]")])
-    @test isapprox(fixef(model, mean), transpose(mean(fixef(model), dims=1)))
+    @test isapprox(fixef(model, mean), mean(fixef(model), dims=2))
     @test ndims(fixef(model, median; dropdims=false)) == 2
 
-    @test coefs(model) == fixef(model, median)
+    @test coef(model) == fixef(model, median)
 
     ints = internals(model)
-    @test Array(dims(ints, 2)) == Symbol.([
+    @test Array(dims(ints, 1)) == Symbol.([
         "lp",
         "n_steps",
         "is_accept",
@@ -182,7 +232,7 @@ model = @suppress fit!(model);
         "step_size",
         "nom_step_size",
     ])
-    @test isapprox(internals(model, mean), transpose(mean(ints, dims=1)))
+    @test isapprox(internals(model, mean), mean(ints, dims=2))
     @test ndims(internals(model, median; dropdims=false)) == 2
 
     out = outcome(model)
@@ -203,65 +253,11 @@ end
     @test isapprox(lp, log.(ep))
     @test var(pp) > var(ep) #higher variance
     # Relations: without link
-    @test predict(mod, pred_data; type=:linpred) == predict(mod, pred_data; type=:epred)
-    @test var(predict(mod, pred_data; type=:posterior)) >
-        var(predict(mod, pred_data; type=:epred))
-
-    # test kwargs
-    @test predict(mod_count, mod.X; transform=false) isa DimArray
-    @test predict(mod_count, mod.X; std=true) isa DimArray
+    @test predict(model, pred_data; type=:linpred) == predict(model, pred_data; type=:epred)
+    @test var(predict(model, pred_data; type=:posterior)) >
+        var(predict(model, pred_data; type=:epred))
 end
 
-@testset "Prediction against GLM" begin
-    mod1 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal);
-    Random.seed!(123)
-    fit!(mod1, N=15000)
-    mod_glm = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars);
-    @test isapprox(
-        GLM.coef(mod_glm), coef(mod1, median; drop_warmup=2000), atol=0.025
-    )
-    @test isapprox(
-        GLM.predict(mod_glm), predict(mod1, median; drop_warmup=2000, type=:epred), atol=0.1
-    )
-
-    #mod2 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson; priors=prior);
-    #Random.seed!(123)
-    #fit!(mod2, N=15000);
-    #mod2_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink());
-    #@test isapprox(
-    #    GLM.coef(mod2_glm), parameters(mod2, median; drop_warmup=2000)[1:3], atol=0.025
-    #)
-    #@test isapprox(
-    #    GLM.predict(mod2_glm),
-    #    predict(mod2, median; drop_warmup=2000, type=:epred),
-    #    atol=0.2,
-    #)
-
-    #mod3 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial; priors=prior);
-    #Random.seed!(123)
-    #fit!(mod3, N=15000);
-    #mod3_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink());
-    #@test isapprox(
-    #    GLM.coef(mod3_glm), parameters(mod3, median; drop_warmup=2000)[1:3], atol=0.025
-    #)
-    #@test isapprox(
-    #    GLM.predict(mod3_glm), predict(mod3, median; drop_warmup=2000, type=:epred), atol=2
-    #)
-
-    Random.seed!(123)
-    mod4 = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic_expanded, Bernoulli);
-    fit!(mod4, N=15000);
-    mod4_glm = GLM.glm(@formula(Survived ~ Class + Sex + Age), titanic_expanded, Binomial(), GLM.LogitLink());
-    GLM.coef(mod4_glm)
-    @test isapprox(
-        GLM.coef(mod4_glm), parameters(mod4, median; drop_warmup=2000), atol=0.05
-    )
-    @test isapprox(
-        GLM.predict(mod4_glm),
-        predict(mod4, median; drop_warmup=2000, type=:epred),
-        atol=0.05,
-    )
-end
 
 @testset "Display Methods" begin
     show_output = sprint(show, model)

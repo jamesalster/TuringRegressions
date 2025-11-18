@@ -249,27 +249,25 @@ function fit!(
     param_names = :α ∈ param_names ? [:α; filter(!=(:α), param_names)] : param_names
 
     
-    # Extract all parameters in one pass
-param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
-                  for p in param_names)
+    # Extract all parameters in one pass, thanks to claude for help
+    param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
+                    for p in param_names)
 
-arrays = []
-labels = Symbol[]
-for param in param_names
-    if param === :β
-        arr = stack(param_dict[param])  # (2, 1000, 4)
-        push!(arrays, arr)
-        append!(labels, [Symbol("β[$i]") for i in 1:size(arr, 1)])
-    else
-        arr = param_dict[param]  # Already (1000, 4)
-        push!(arrays, reshape(arr, 1, size(arr)...))  # (1, 1000, 4)
-        push!(labels, param)
+    arrays = []
+    labels = Symbol[]
+    for param in param_names
+        if param === :β
+            arr = stack(param_dict[param])  # (params, draws, chains)
+            push!(arrays, arr)
+            append!(labels, [Symbol("β[$i]") for i in 1:size(arr, 1)])
+        else
+            arr = param_dict[param]  # (draws, chains)
+            push!(arrays, reshape(arr, 1, size(arr)...))  # (params, draws, chains)
+            push!(labels, param)
+        end
     end
-end
 
-    println(size.(arrays))
-    println(labels)
-TR.parameters = DimArray(vcat(arrays...), (Dim{:param}(labels), Dim{:draw}, Dim{:chain}))
+    TR.parameters = DimArray(vcat(arrays...), (Dim{:param}(labels), Dim{:draw}, Dim{:chain}))
 
     return TR
 end

@@ -215,8 +215,8 @@ end
 @testset "Prediction against GLM" begin
     mod1 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal);
     Random.seed!(123)
-    fit!(mod1, N=15000);
-    mod_glm = GLM.lm(@formula(MPG ~ Cyl + Disp)[1:3], mtcars);
+    fit!(mod1, N=15000)
+    mod_glm = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars);
     @test isapprox(
         GLM.coef(mod_glm), coef(mod1, median; drop_warmup=2000), atol=0.025
     )

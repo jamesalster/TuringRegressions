@@ -51,16 +51,32 @@ function linpred(
     dropdims=true,
     kwargs...,
 )
-    α = get_parameters(TR, [:α]; kwargs...) # vec required for NamedArray problems below
-    beta_names = [Symbol("β[$i]") for i in 1:size(TR.X, 2)]
-    β = get_parameters(TR, beta_names; kwargs...) # vec required for NamedArray problems below
-    # handle 3d
-    μ = zeros(
-        eltype(α), (Dim{:row}(size(X, 1)), Dim{:draw}(size(α, 2)), Dim{:chain}(size(α, 3)))
-    )
-    for i in 1:size(μ, 3)
-        μ[:, :, i] = vec(α[:, :, i])' .+ X * β[:, :, i]
+    # Get relevant parameters
+    if TR.modelinfo.has_fixed_effects
+        beta_names = [Symbol("β[$i]") for i in 1:size(TR.X, 2)]
+        β = get_parameters(TR, beta_names; kwargs...) # vec required for NamedArray problems below
+        ndraws = size(β, 2)
+        nchains = size(β, 3)
     end
+    if TR.modelinfo.has_intercept
+        α = get_parameters(TR, [:α]; kwargs...) # vec required for NamedArray problems below
+        ndraws = size(α, 2)
+        nchains = size(α, 3)
+    end
+
+    # Initialise linear model output
+    μ = zeros((Dim{:row}(size(X, 1)), Dim{:draw}(ndraws), Dim{:chain}(nchains)))
+
+    # loop over chains for dot product vectorisation
+    for i in 1:size(μ, 3) 
+        if TR.modelinfo.has_fixed_effects
+            μ[:, :, i] .+=  X * β[:, :, i]
+        end
+        if TR.modelinfo.has_intercept
+            μ[:, :, i] .+= vec(α[:, :, i])'
+        end
+    end
+
     μ = isnothing(fun) ? μ : mapslices(fun, μ; dims=2)
     return dropdims ? drop_single_dims(μ) : μ
 end

@@ -34,7 +34,7 @@ function _auxiliary_parameter(prior::Distribution, family::Type{<:Distribution})
             σ ~ Exponential(1)
             ν ~ $prior
         end
-    elseif family == Bernoulli
+    elseif family ∈ [Bernoulli, Poisson]
         return :() #empty quote, no code
     end
 end
@@ -50,9 +50,9 @@ function _linear_model(has_intercept::Bool, has_fixed_effects::Bool, has_random_
     if has_fixed_effects 
         push!(terms, :(X_scaled * β))
     end
-    if has_random_effects 
-        push!(terms, :(τ .* getindex.((zⱼ,), idxs)))
-    end
+    #if has_random_effects 
+    #    push!(terms, :(τ .* getindex.((zⱼ,), idxs)))
+    #end
 
     # Build expression
     if length(terms) == 1
@@ -81,6 +81,12 @@ function _likelihood(family::Type{<:Distribution})
                 Turing.@addlogprob! logpdf(BernoulliLogit(μ[n]), y[n]) #Not scaled
             end
         end
+    elseif family == Poisson
+        quote
+            for n in 1:nobs
+                Turing.@addlogprob! logpdf(LogPoisson(μ[n]), y[n]) #Not scaled
+            end
+        end
     end
 end
 
@@ -101,7 +107,13 @@ function _weighted_likelihood(family::Type{<:Distribution})
     elseif family == Bernoulli
         quote
             for n in 1:nobs
-                Turing.@addlogprob! weights[n] * logpdf(BernoulliLogit(μ[n]), y_scaled[n])
+                Turing.@addlogprob! weights[n] * logpdf(BernoulliLogit(μ[n]), y[n])
+            end
+        end
+    elseif family == Poisson
+        quote
+            for n in 1:nobs
+                Turing.@addlogprob! weights[n] * logpdf(LogPoisson(μ[n]), y[n])
             end
         end
     end
@@ -141,7 +153,7 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
 
     # Calculations and objects to return
     if has_fixed_effects
-        if family == Bernoulli # Not standardised
+        if family ∈ [Bernoulli, Poisson] # Not standardised
             push!(body.args, :(β_original = β ./ X_stds))
         else
             push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
@@ -149,7 +161,7 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
         push!(return_list, :(β=β_original))
     end
     if has_intercept
-        if family == Bernoulli # Not standardised
+        if family ∈ [Bernoulli, Poisson] # Not standardised
             push!(body.args, :(α_original = α - dot(X_means, β_original)))
         else
             push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
@@ -192,7 +204,7 @@ function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, p
         push!(body.args, _random_effects(prior.random_effects))
     end
 
-    if family != Bernoulli #Bernoulli has no auxiliary parameter
+    if family ∉ [Bernoulli, Poisson] #Bernoulli and Poisson have no auxiliary parameter
         push!(body.args, _auxiliary_parameter(prior.auxiliary, family))
     end
 

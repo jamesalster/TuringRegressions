@@ -34,18 +34,18 @@ titanic_expanded.Survived = titanic_expanded.Survived .== "Yes"
         GLM.predict(mod_glm), predict(mod1, median; drop_warmup=2000, type=:epred), atol=0.1
     )
 
-    #mod2 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson; priors=prior);
-    #Random.seed!(123)
-    #fit!(mod2, N=15000);
-    #mod2_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink());
-    #@test isapprox(
-    #    GLM.coef(mod2_glm), parameters(mod2, median; drop_warmup=2000)[1:3], atol=0.025
-    #)
-    #@test isapprox(
-    #    GLM.predict(mod2_glm),
-    #    predict(mod2, median; drop_warmup=2000, type=:epred),
-    #    atol=0.2,
-    #)
+    mod2 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson);
+    Random.seed!(123)
+    fit!(mod2, N=15000);
+    mod2_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink());
+    @test isapprox(
+        GLM.coef(mod2_glm), parameters(mod2, median; drop_warmup=2000), atol=0.025
+    )
+    @test isapprox(
+        GLM.predict(mod2_glm),
+        predict(mod2, median; drop_warmup=2000, type=:epred),
+        atol=1,
+    )
 
     #mod3 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial; priors=prior);
     #Random.seed!(123)
@@ -168,8 +168,8 @@ end
 model = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, TDist);
 model_empty = deepcopy(model);
 model = @suppress fit!(model);
-#mod_count = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson);
-#fit!(mod_count);
+mod_count = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson);
+fit!(mod_count);
 
 @testset "Parameter Methods" begin
     default_samples = 2000

@@ -19,13 +19,9 @@ end
 Returns sensible default priors for a regression model.
 
 The auxiliary parameter adapts to the family:
-- Normal/Bernoulli: Exponential(1) for variance
+- Normal: Exponential(1) for variance
 - TDist: Gamma(2, 0.1) for degrees of freedom
-
-# Example
-```julia
-prior = default_prior(Normal)  # For linear regression
-prior = default_prior(TDist)   # For robust regression
+- Bernoulli: Unused
 ```
 """
 function default_prior(family::Type{<:Distribution})::RegressionPrior
@@ -36,7 +32,8 @@ function default_prior(family::Type{<:Distribution})::RegressionPrior
         random_effects = Exponential(1),
     )
 
-    if family ∈ [Normal, Bernoulli]
+    # Alter auxiliary prior
+    if family ∈ [Normal, Bernoulli, Poisson]
         return RegressionPrior(
             overall_defaults...,
             Exponential(1)
@@ -52,7 +49,8 @@ function default_prior(family::Type{<:Distribution})::RegressionPrior
 end
 
 """
-    default_prior(TR::TuringRegression{T}) -> RegressionPrior
+    default_prior(TR::TuringRegression{T})
 
 Convenience method that extracts the distribution family from a model.
 """
+default_prior(TR::TuringRegression{T}) where {T} = default_prior(T)

@@ -70,7 +70,7 @@ function turing_glm(formula::FormulaTerm,
     weights::Union{Nothing, Vector{Float64}}=nothing,
     show_code::Bool=false) 
 
-    if family ∉ [Normal, TDist, Bernoulli]
+    if family ∉ [Normal, TDist, Bernoulli, Poisson]
         error("Family: $(string(family)) not supported.")
     end
 

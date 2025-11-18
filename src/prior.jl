@@ -33,7 +33,7 @@ function default_prior(family::Type{<:Distribution})::RegressionPrior
     )
 
     # Alter auxiliary prior
-    if family ∈ [Normal, Bernoulli, Poisson]
+    if family ∈ [Normal, Bernoulli, Poisson, NegativeBinomial]
         return RegressionPrior(
             overall_defaults...,
             Exponential(1)

@@ -73,7 +73,7 @@ function Base.summary(
     # show
     show(io, TR; warnings=false)
     println(io)
-    summary_table(
+    pretty_table(
         io,
         chain_info;
         title="Fixed Effects",
@@ -90,7 +90,7 @@ function Base.summary(
         ),
         default_options...,
     )
-    summary_table(
+    pretty_table(
         io,
         Matrix(metric_tab);
         title="Prediction Metrics",

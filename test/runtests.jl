@@ -47,16 +47,17 @@ titanic_expanded.Survived = titanic_expanded.Survived .== "Yes"
         atol=1,
     )
 
-    #mod3 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial; priors=prior);
-    #Random.seed!(123)
-    #fit!(mod3, N=15000);
-    #mod3_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink());
-    #@test isapprox(
-    #    GLM.coef(mod3_glm), parameters(mod3, median; drop_warmup=2000)[1:3], atol=0.025
-    #)
-    #@test isapprox(
-    #    GLM.predict(mod3_glm), predict(mod3, median; drop_warmup=2000, type=:epred), atol=2
-    #)
+    mod3 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial);
+    Random.seed!(123)
+    fit!(mod3, N=15000);
+    summary(mod3)
+    mod3_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink());
+    @test isapprox(
+        GLM.coef(mod3_glm), parameters(mod3, median; drop_warmup=2000)[1:3], atol=0.025
+    )
+    @test isapprox(
+        GLM.predict(mod3_glm), predict(mod3, median; drop_warmup=2000, type=:epred), atol=2
+    )
 
     Random.seed!(123)
     mod4 = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic_expanded, Bernoulli);

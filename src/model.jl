@@ -34,6 +34,11 @@ function _auxiliary_parameter(prior::Distribution, family::Type{<:Distribution})
             σ ~ Exponential(1)
             ν ~ $prior
         end
+    elseif family == NegativeBinomial
+        quote 
+            ϕ ~ $prior
+            ϕ_inv = 1 / ϕ
+        end
     elseif family ∈ [Bernoulli, Poisson]
         return :() #empty quote, no code
     end
@@ -87,6 +92,12 @@ function _likelihood(family::Type{<:Distribution})
                 Turing.@addlogprob! logpdf(LogPoisson(μ[n]), y[n]) #Not scaled
             end
         end
+    elseif family == NegativeBinomial
+        quote
+            for n in 1:nobs
+                Turing.@addlogprob! logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) #Not scaled
+            end
+        end
     end
 end
 
@@ -114,6 +125,12 @@ function _weighted_likelihood(family::Type{<:Distribution})
         quote
             for n in 1:nobs
                 Turing.@addlogprob! weights[n] * logpdf(LogPoisson(μ[n]), y[n])
+            end
+        end
+    elseif family == NegativeBinomial
+        quote
+            for n in 1:nobs
+                Turing.@addlogprob! weights[n] * logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) #Not scaled
             end
         end
     end
@@ -153,7 +170,7 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
 
     # Calculations and objects to return
     if has_fixed_effects
-        if family ∈ [Bernoulli, Poisson] # Not standardised
+        if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
             push!(body.args, :(β_original = β ./ X_stds))
         else
             push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
@@ -161,7 +178,7 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
         push!(return_list, :(β=β_original))
     end
     if has_intercept
-        if family ∈ [Bernoulli, Poisson] # Not standardised
+        if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
             push!(body.args, :(α_original = α - dot(X_means, β_original)))
         else
             push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
@@ -174,6 +191,9 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
     end
     if family == TDist
         push!(return_list, :(ν=ν))
+    end
+    if family == NegativeBinomial
+        push!(return_list, :(ϕ=ϕ))
     end
 
     # add return line to body as a named tuple

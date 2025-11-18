@@ -70,7 +70,7 @@ function turing_glm(formula::FormulaTerm,
     weights::Union{Nothing, Vector{Float64}}=nothing,
     show_code::Bool=false) 
 
-    if family ∉ [Normal, TDist, Bernoulli, Poisson]
+    if family ∉ [Normal, TDist, Bernoulli, Poisson, NegativeBinomial]
         error("Family: $(string(family)) not supported.")
     end
 
@@ -173,13 +173,16 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
         println(io, normal_style, clean_prior_string(string(pr.random_effects)))
     end
 
-    if T ∈ [TDist]
+    if T == TDist
         print(io, normal_style, "  Error Variance: ")
         println(io, normal_style, "Exponential(θ=1.0)")
         print(io, normal_style, "  Auxiliary (ν): ")
         println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
-    elseif T ∈ [Normal]
+    elseif T == Normal
         print(io, normal_style, "  Auxiliary (σ): ")
+        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
+    elseif T == NegativeBinomial2
+        print(io, normal_style, "  Auxiliary (1/ϕ): ")
         println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
     end
 

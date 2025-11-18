@@ -41,3 +41,10 @@ function get_link(::Type{T}) where {T<:UnivariateDistribution}
         return identity
     end
 end
+
+# Stan-style negative binomial parameterisation, taken from TuringGLM.jl
+function NegativeBinomial2(μ::T, ϕ::T) where {T<:Real}
+    p = max(1 / (1 + μ / ϕ), 1e-6) # numerical stability
+    r = ϕ
+    return NegativeBinomial(r, p)
+end

@@ -128,12 +128,6 @@ function _standardise_data(family::Type, has_fixed_effects::Bool)
             y_std = std(y)
             y_scaled = (y .- y_mean) / y_std
         end)
-    elseif family == Bernoulli # no scaling of y, these values make other code more concise
-        push!(body.args, quote 
-            y_std = 1
-            y_mean = 0
-            y_scaled = y
-        end)
     end
 
     return body
@@ -147,11 +141,19 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
 
     # Calculations and objects to return
     if has_fixed_effects
-        push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
+        if family == Bernoulli # Not standardised
+            push!(body.args, :(β_original = β ./ X_stds))
+        else
+            push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
+        end
         push!(return_list, :(β=β_original))
     end
     if has_intercept
-        push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
+        if family == Bernoulli # Not standardised
+            push!(body.args, :(α_original = α - dot(X_means, β_original)))
+        else
+            push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
+        end
         push!(return_list, :(α=α_original))
     end
     if family ∈ [Normal, TDist]

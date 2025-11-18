@@ -1,7 +1,7 @@
 
 # build on MCMCChains.summarize
 """
-    pretty(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, standardized=false, draws_idx=nothing, kwargs...)
+    summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, standardized=false, draws_idx=nothing, kwargs...)
 
 Display formatted summary table of model parameters.
 
@@ -15,7 +15,7 @@ Display formatted summary table of model parameters.
 - `draws_idx`: Subset of draws to use (default: all draws)
 - `kwargs...`: Additional arguments passed to summarize
 """
-function pretty(
+function Base.summary(
     io::IO,
     TR::TuringRegression;
     funs=[mean, std],
@@ -73,7 +73,7 @@ function pretty(
     # show
     show(io, TR; warnings=false)
     println(io)
-    pretty_table(
+    summary_table(
         io,
         chain_info;
         title="Fixed Effects",
@@ -90,7 +90,7 @@ function pretty(
         ),
         default_options...,
     )
-    pretty_table(
+    summary_table(
         io,
         Matrix(metric_tab);
         title="Prediction Metrics",
@@ -109,8 +109,8 @@ function pretty(
 end
 
 # Catch-all method for non-IO calls
-function pretty(TR::TuringRegression, args...; kwargs...)
-    pretty(stdout, TR, args...; kwargs...)
+function Base.summary(TR::TuringRegression, args...; kwargs...)
+    summary(stdout, TR, args...; kwargs...)
 end
 
 function make_chain_info(TR::TuringRegression)

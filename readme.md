@@ -31,7 +31,7 @@ mod = turing_glm(
 fit!(mod, N=1000, nchains=2)
 
 # View results
-pretty(mod)
+summary(mod)
 
 # Get coefficients
 fixed_effects = fixef(mod)  # With uncertainty
@@ -123,7 +123,7 @@ pp_check_dens_overlay(mod)
 * `loo_compare(models...)` - Compare multiple models
 
 ### Utilities
-* `pretty(model)` - Formatted summary
+* `summary(model)` - Formatted summary
 * `parameter_names(model)` - Parameter names
 * `outcome(model)` - Response variable
 * `outcome_as_distribution(model)` - Response variable as CategoricalDistributions.jl object (Bernoulli only)

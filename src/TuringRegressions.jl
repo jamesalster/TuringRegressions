@@ -33,7 +33,7 @@ include("model.jl")
 include("utils.jl")
 include("parametermethods.jl")
 include("predict.jl")
-include("pretty.jl")
+include("summary.jl")
 include("metrics.jl")
 include("comparison.jl")
 

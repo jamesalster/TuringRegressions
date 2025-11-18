@@ -75,14 +75,13 @@ function turing_glm(formula::FormulaTerm,
     end
 
     # Get data arrays
-    y = data_response(formula, data)
-    X = data_fixed_effects(formula, data)
+    y, X, Z = extract_model_data(formula, data)
 
     # Make model info
     model_info = ModelInfo(
         has_intercept(formula),
         size(X, 2) > 0,
-        has_ranef(formula),
+        !isnothing(Z),
         !isnothing(weights)
     )
 
@@ -95,7 +94,7 @@ function turing_glm(formula::FormulaTerm,
         get_link(family),
         y,
         X,
-        nothing,
+        Z,
         weights,
         get_fixef_names(formula, data),
         nothing,
@@ -211,7 +210,7 @@ end
 """
     fit!(TR::TuringRegression; sampler, parallel, N, nchains, quiet, kwargs...)
 
-Run MCMC sampling to fit the model. Updates the model in-place.
+Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passed to Turing's `sample()`.
 
 # Arguments
 - `sampler`: MCMC algorithm (default: NUTS())
@@ -234,16 +233,31 @@ function fit!(
     quiet=true,
     kwargs...,
 )
+    # Prepare random effect data structures
+    if TR.modelinfo.has_random_effects
+        n_gr = length(Z)
+        group_idx = zeros(Int, size(X, 1), n_gr)
+        group_predictors = Vector{Matrix{Float64}}(undef, n_gr)
+
+        for i in 1:n_gr
+            ranef = Z[i]
+            group_idx[:,i] = ranef.level_index
+            group_predictors[i] = ranef.predictors #this is an empty matrix if no fixed effects for the ranef
+        end
+    end
+
+    # Call model function
     if TR.modelinfo.has_random_effects & TR.modelinfo.weighted
-        model_with_data = TR.model(TR.y, TR.X, TR.z, TR.weights)
+        model_with_data = TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors, TR.weights)
     elseif TR.modelinfo.has_random_effects 
-        model_with_data = TR.model(TR.y, TR.X, TR.z)
+        model_with_data = TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors)
     elseif TR.modelinfo.weighted 
         model_with_data = TR.model(TR.y, TR.X, TR.weights)
     else
         model_with_data = TR.model(TR.y, TR.X)
     end
 
+    # Sample
     if quiet
         TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; kwargs...)
     else
@@ -254,12 +268,12 @@ function fit!(
     gq = generated_quantities(model_with_data, TR.samples)
     param_names = collect(keys(first(gq)))
     param_names = :α ∈ param_names ? [:α; filter(!=(:α), param_names)] : param_names
-
     
     # Extract all parameters in one pass, thanks to claude for help
     param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
                     for p in param_names)
 
+    # TODO handle random effects
     arrays = []
     labels = Symbol[]
     for param in param_names

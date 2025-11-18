@@ -26,6 +26,7 @@ using LinearAlgebra: I, dot
 using Colors: colormap
 using CategoricalArrays: categorical
 using CategoricalDistributions: UnivariateFinite
+using MixedModels: _ranef_refs
 
 include("prior.jl")
 include("formula_handlers.jl")

@@ -27,40 +27,50 @@ function Base.summary(
     ##LLM in a hurry
     isnothing(TR.samples) && throw(ArgumentError("Turing Model has not yet been fit!()"))
 
-    funs_all = vcat(funs..., [(x -> quantile(x, q)) for q in quantiles]...)
+    funs_all = vcat(funs, [(x -> quantile(x, q)) for q in quantiles])
     func_names_all = vcat(
-        Symbol.(funs)..., [Symbol("q$(round(q*100; digits =1))") for q in quantiles]...
+        Symbol.(funs), [Symbol("q$(round(q*100; digits=1))") for q in quantiles]
     )
 
     draws_idx = something(draws_idx, 1:size(TR.samples, 1))
+    param_names = _get_parameter_names(TR)
+    n_params = length(param_names)
 
-    # Summary
-    summary_rows = map(_get_parameter_names(TR)) do p
+    stat_vectors = [Vector{Float64}(undef, n_params) for _ in func_names_all]
+    mcse_vec = Vector{Float64}(undef, n_params)
+    ess_bulk_vec = Vector{Float64}(undef, n_params)
+    ess_tail_vec = Vector{Float64}(undef, n_params)
+    rhat_vec = Vector{Float64}(undef, n_params)
+
+    for i in 1:n_params  # Parallelize if safe
+        p = param_names[i]
         data = TR.parameters[param=At(p)]
         all_vals = vec(data)
         
-        # Apply custom functions
-        custom_vals = [f(all_vals) for f in funs]
-        quant_vals = [quantile(all_vals, q) for q in quantiles]
-        
-        # Build row dynamically
-        row = (parameters = p,)
-        for (name, val) in zip(func_names_all, vcat(custom_vals, quant_vals))
-            row = merge(row, (name => val,))
+        # Custom functions
+        for (j, f) in enumerate(funs)
+            stat_vectors[j][i] = f(all_vals)
         end
         
-        # Add diagnostics
-        merge(row, (
-            mcse = mcse(data),
-            ess_bulk = ess(data),
-            ess_tail = ess(data; kind=:tail),
-            rhat = rhat(data)
-        ))
-    end 
-    
-    df = DataFrame(summary_rows)
-    chain_info = (; (Symbol(n) => df[!, n] for n in names(df) if n != "parameters")...)
-    
+        # All quantiles in one call
+        quants = quantile(all_vals, quantiles)
+        for (k, q) in enumerate(quants)
+            stat_vectors[length(funs) + k][i] = q
+        end
+        
+        # Diagnostics - compute once
+        mcse_vec[i] = mcse(data)
+        ess_bulk_vec[i] = ess(data)
+        ess_tail_vec[i] = ess(data; kind=:tail)
+        rhat_vec[i] = rhat(data)
+    end
+
+    chain_info = (;
+        zip(func_names_all, stat_vectors)...,
+        mcse = mcse_vec, ess_bulk = ess_bulk_vec,
+        ess_tail = ess_tail_vec, rhat = rhat_vec
+    )
+
     ncols = length(chain_info)
 
     #metrics
@@ -111,9 +121,6 @@ end
 # Catch-all method for non-IO calls
 function Base.summary(TR::TuringRegression, args...; kwargs...)
     summary(stdout, TR, args...; kwargs...)
-end
-
-function make_chain_info(TR::TuringRegression)
 end
 
 function model_warnings(chain_info)

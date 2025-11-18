@@ -231,7 +231,7 @@ function construct_model(family::Type{<:Distribution}, model_info::ModelInfo, pr
         end
     end
     
-    model_code_str = MacroTools.prettify(model_code)
+    model_code_str = prettify(model_code)
     if show_code
         println("Generated model:\n $(model_code_str)")
     end

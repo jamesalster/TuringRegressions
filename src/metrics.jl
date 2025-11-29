@@ -29,7 +29,9 @@ calculate_metrics(my_model, [accuracy, kappa])
 calculate_metrics(my_model, [rmse, mae], mean, threshold=0.6)
 # select draws
 calculate_metrics(my_model, [rmse, mae], drop_warmup=500, collapse=false)
+```
 """
+
 function calculate_metrics(
     TR::TuringRegression{T},
     metrics::Vector,

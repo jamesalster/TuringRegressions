@@ -13,9 +13,10 @@ end
 
 ## Parameter methods
 """
-    parameter_names(TR::TuringRegression, params=TR.samples.name_map[:parameters])
+    parameter_names(TR::TuringRegression, params)
+    parameter_names(TR::TuringRegression)
 
-Get parameter names with friendly labels replacing generic β indices.
+Get parameter names with friendly labels replacing generic β indices. 
 """
 function parameter_names(TR::TuringRegression, params=_get_parameter_names(TR))
     rename_dict = Dict(Symbol("β[$i]") => Symbol(nm) for (i, nm) in enumerate(TR.X_names))

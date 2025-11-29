@@ -262,31 +262,65 @@ function fit!(
         TR.samples = sample(model_with_data, sampler, parallel, N, nchains; kwargs...)
     end
 
-    # Recover standardised parameters from generated quantities - a bit of help from claude
+    # Recover standardised parameters from generated quantities, thanks to claude
     gq = generated_quantities(model_with_data, TR.samples)
     param_names = collect(keys(first(gq)))
     param_names = :α ∈ param_names ? [:α; filter(!=(:α), param_names)] : param_names
-    
-    # Extract all parameters in one pass, thanks to claude for help
+
+    # Extract all parameters in one pass
     param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
                     for p in param_names)
 
-    # TODO handle random effects
     arrays = []
     labels = Symbol[]
-    for param in param_names
+
+    # Fixed effects (non-random)
+    for param in filter(p -> !occursin("_z_", string(p)), param_names)
         if param === :β
-            arr = stack(param_dict[param])  # (params, draws, chains)
+            arr = stack(param_dict[param])
             push!(arrays, arr)
             append!(labels, [Symbol("β[$i]") for i in 1:size(arr, 1)])
         else
-            arr = param_dict[param]  # (draws, chains)
-            push!(arrays, reshape(arr, 1, size(arr)...))  # (params, draws, chains)
+            push!(arrays, reshape(param_dict[param], 1, size(param_dict[param])...))
             push!(labels, param)
         end
     end
 
-    TR.parameters = DimArray(vcat(arrays...), (Dim{:param}(labels), Dim{:draw}, Dim{:chain}))
+    # Random effects
+    for re in TR.z
+        group = re.variable
+        
+        # Intercepts
+        if re.has_intercept
+            push!(arrays, stack(param_dict[Symbol("α_z_", group)]))
+            append!(labels, [Symbol("$(group)[Intercept,$(lev)]") for lev in re.levels])
+        end
+        
+        ## Slopes
+        if re.has_fixed_effects
+            arr = stack(param_dict[Symbol("β_z_", group)])
+            push!(arrays, dropdims(arr; dims=1))
+            for pred in re.predictor_names, lev in re.levels
+                push!(labels, Symbol("$(group)[$(pred),$(lev)]"))
+            end
+        end
+        
+        # Correlations
+        R_param = Symbol("R_z_", group)
+        if R_param ∈ param_names
+            effect_names = Symbol[]
+            re.has_intercept && push!(effect_names, :Intercept)
+            re.has_fixed_effects && append!(effect_names, Symbol.(re.predictor_names))
+            
+            R_samples = param_dict[R_param]
+            for i in 1:length(effect_names), j in (i+1):length(effect_names)
+                corr_vals = [R_samples[d, c][i, j] for d in axes(R_samples, 1), c in axes(R_samples, 2)]
+                push!(arrays, reshape(corr_vals, 1, size(corr_vals)...))
+                push!(labels, Symbol("R_$(group)[$(effect_names[i]),$(effect_names[j])]"))
+            end
+        end
+    end
 
+    TR.parameters = DimArray(vcat(arrays...), (Dim{:param}(labels), Dim{:draw}, Dim{:chain}))
     return TR
 end

@@ -5,6 +5,7 @@ struct RandomEffect
     levels::Vector            # unique levels
     level_index::Vector{Int} # data coded as integer index into levels
     predictors::Matrix{Float64} #predictor matrix
+    predictor_names::Vector{String} #names of predictors
     has_intercept::Bool       # random intercept?
     has_fixed_effects::Bool
 end
@@ -103,11 +104,12 @@ function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
     
     # Get predictor matrix from LHS using modelcols
     predictors = modelcols(term.lhs, d)[:, 2:end]
+    predictor_names = [string(t) for t in term.lhs.terms][2:end]
 
     has_fixed_effects = size(predictors, 2) > 0
     
     # Check for intercept in column names
     has_intercept = StatsModels.hasintercept(term.lhs)
     
-    return RandomEffect(variable, levels, level_index, predictors, has_intercept, has_fixed_effects)
+    return RandomEffect(variable, levels, level_index, predictors, predictor_names, has_intercept, has_fixed_effects)
 end

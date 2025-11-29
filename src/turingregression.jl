@@ -31,10 +31,9 @@ mutable struct TuringRegression{T<:Distribution}
     link::Function
     y::AbstractVector
     X::AbstractMatrix
-    z::Union{Nothing,AbstractMatrix}
+    z::Union{Nothing,Vector{RandomEffect}}
     weights::Union{Nothing,Vector{Float64}}
     X_names::Union{Nothing,Vector{String}}
-    z_names::Union{Nothing,Vector{String}}
     modelinfo::ModelInfo
     modelcode::Expr
     samples::Union{Nothing,Chains}
@@ -85,7 +84,7 @@ function turing_glm(formula::FormulaTerm,
         !isnothing(weights)
     )
 
-    model_obj, model_code = construct_model(family, model_info, priors, show_code)
+    model_obj, model_code = construct_model(family, model_info, Z, priors, show_code)
 
     return TuringRegression{family}(
         formula,
@@ -97,7 +96,6 @@ function turing_glm(formula::FormulaTerm,
         Z,
         weights,
         get_fixef_names(formula, data),
-        nothing,
         model_info,
         model_code,
         nothing,
@@ -235,12 +233,12 @@ function fit!(
 )
     # Prepare random effect data structures
     if TR.modelinfo.has_random_effects
-        n_gr = length(Z)
-        group_idx = zeros(Int, size(X, 1), n_gr)
-        group_predictors = Vector{Matrix{Float64}}(undef, n_gr)
+        n_gr = zeros(Int, length(TR.z))
+        group_idx = zeros(Int, size(first(TR.z).predictors, 1), length(TR.z))
+        group_predictors = Vector{Matrix{Float64}}(undef, length(TR.z))
 
-        for i in 1:n_gr
-            ranef = Z[i]
+        for (i, ranef) in enumerate(TR.z)
+            n_gr[i] = length(ranef.levels)
             group_idx[:,i] = ranef.level_index
             group_predictors[i] = ranef.predictors #this is an empty matrix if no fixed effects for the ranef
         end

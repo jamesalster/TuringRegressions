@@ -24,36 +24,37 @@ function _random_effects(prior::Distribution, prior_fixef::Distribution, model_r
         ranef_name = string(ranef.variable)
 
         #Name parameters
-        variance_ranef = Symbol("σ_ranef",ranef_name)
-        intercept_ranef = Symbol("β_z_",ranef_name)
+        variance_ranef = Symbol("σ_z_",ranef_name)
+        intercept_ranef = Symbol("α_z_",ranef_name)
         ranef_matrix_raw = Symbol("r_z_",ranef_name)
         ranef_matrix = Symbol("ranef_z_",ranef_name)
-        R_ranef = Symbol("R_z_",ranef_name)
+        L_ranef = Symbol("L_z_",ranef_name)
 
         #Build varying slopes prior
-        n_predictors = 0
-        if ranef.has_intercept
-            n_predictors += 1
-        end
-        if ranef.has_fixed_effects
-            n_predictors += size(ranef.predictors, 2)
-        end
-
-        push!(body_args, quote
-            $variance_ranef ~ filldist($prior, $n_predictors)
-            $intercept_ranef ~ filldist($prior_fixef, $n_predictors) #ideally with 0 included?
-        end)
-
-        if n_predictors > 1
-            push!(body_args, quote
-                $R_ranef ~ LKJ($n_predictors, 2.0)
-                $ranef_matrix_raw ~ filldist(MvNormal(zeros(n_predictors), Symmetric(diagm($variance_ranef)* $R_ranef * diagm($variance_ranef))), n_groups)
-                $ranef_matrix = $ranef_matrix_raw .+ $intercept_ranef
+        if ranef.has_intercept & ranef.has_fixed_effects
+            n_predictors = size(ranef.predictors, 2) + 1
+            push!(body.args, quote
+                $variance_ranef ~ filldist($prior, $n_predictors)
+                $intercept_ranef ~ filldist($prior_fixef, $(n_predictors-1)) #ideally with 0 included?
+                $L_ranef ~ LKJCholesky($n_predictors, 2.0)
+                $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
+                # Transform: β_z + Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
+                $ranef_matrix = (vcat(0, $intercept_ranef) .+ diagm($variance_ranef) * $L_ranef.L * $ranef_matrix_raw)'
             end)
-        else
-            push!(body_args, quote
-                $ranef_matrix_raw ~ filldist(Normal(), n_predictors)
-                $ranef_matrix = ranef_matrix_raw .* $variance_ranef .+ intercept_ranef
+        elseif ranef.has_fixed_effects
+            n_predictors = size(ranef.predictors, 2)
+            push!(body.args, quote
+                $variance_ranef ~ filldist($prior, $n_predictors)
+                $ranef_matrix_raw ~ filldist(Normal(), n_groups[$i])
+                $intercept_ranef ~ filldist($prior_fixef, $(n_predictors)) #ideally with 0 included?
+                $ranef_matrix = $ranef_matrix_raw .* $variance_ranef .+ intercept_ranef
+            end)
+        elseif ranef.has_intercept
+            n_predictors = 1
+            push!(body.args, quote
+                $variance_ranef ~ filldist($prior, $n_predictors)
+                $ranef_matrix_raw ~ filldist(Normal(), n_groups[$i])
+                $ranef_matrix = $ranef_matrix_raw .* $variance_ranef 
             end)
         end
     end
@@ -93,18 +94,20 @@ function _linear_model(has_intercept::Bool, has_fixed_effects::Bool, has_random_
         push!(terms, :(X_scaled * β))
     end
     if has_random_effects 
-        for ranef in model_ranef
+        for (i, ranef) in enumerate(model_ranef)
             ranef_name = string(ranef.variable)
             ranef_matrix = Symbol("ranef_z_", ranef_name)
-            intercept_slopes = Symbol("β_z_", ranef_name)
             predictors_scaled = Symbol("Xscaled_z_", ranef_name)
+
             if ranef.has_intercept & ranef.has_fixed_effects
-                push!(terms, :($ranef_matrix[1, group_idx]))
-                push!(terms, :(($intercept_slopes .+ $ranef_matrix[2:end, group_idx])) .* $predictors_scaled)
+                push!(terms, :($ranef_matrix[group_idx[:,1], 1]))
+                #push!(terms, :($predictors_scaled * $ranef_matrix[2:end, group_idx[:,$i]]))
+                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,1], 2:end]; dims = 2)[:]))
             elseif ranef.has_fixed_effects
-                push!(terms, :(($intercept_slopes .+ $ranef_matrix[:,group_idx])) .* $predictors_scaled)
+                #push!(terms, :($predictors_scaled * $ranef_matrix[:,group_idx[:,$i]]))
+                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,1], :]; dims = 2)[:]))
             elseif ranef.has_intercept
-                push!(terms, :($ranef_matrix[group_idx]))
+                push!(terms, :($ranef_matrix[group_idx[:,1]]))
             end
         end
     end
@@ -124,7 +127,7 @@ end
 function _likelihood(family::Type{<:Distribution})
     if family == Normal
         quote
-            Turing.@addlogprob! logpdf(MvNormal(μ, σ^2 * I), y_scaled)
+            Turing.@addlogprob! logpdf(MvNormal(μ, σ), y_scaled)
         end
     elseif family == TDist
         quote
@@ -208,9 +211,9 @@ function _standardise_data(family::Type, has_fixed_effects::Bool, has_random_eff
                 predictors_sd = Symbol("Xstd_z_", ranef_name)
                 predictors_scaled = Symbol("Xscaled_z_", ranef_name)
                 push!(body.args, quote
-                    $predictors_mn = mean(X_ranef[$i], dims=1)[:]
-                    $predictors_sd = std(X_ranef[$i], dims=1)[:]
-                    $predictors_scaled = (X_ranef[$i] .- $predictors_mn') ./ $predictors_sd'
+                    $predictors_mn = mean(group_predictors[$i], dims=1)[:]
+                    $predictors_sd = std(group_predictors[$i], dims=1)[:]
+                    $predictors_scaled = (group_predictors[$i] .- $predictors_mn') ./ $predictors_sd'
                 end)
             end
         end
@@ -235,19 +238,28 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
     return_list = Expr[]
 
     # Calculations and objects to return
-    if has_fixed_effects
+    if has_intercept & has_fixed_effects
+        if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
+            push!(body.args, :(β_original = β ./ X_stds))
+            push!(body.args, :(α_original = α - dot(X_means, β_original)))
+        else
+            push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
+            push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
+        end
+        push!(return_list, :(α=α_original))
+        push!(return_list, :(β=β_original))
+    elseif has_fixed_effects
         if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
             push!(body.args, :(β_original = β ./ X_stds))
         else
             push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
         end
         push!(return_list, :(β=β_original))
-    end
-    if has_intercept
+    elseif has_intercept
         if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
-            push!(body.args, :(α_original = α - dot(X_means, β_original)))
+            push!(body.args, :(α_original = α))
         else
-            push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
+            push!(body.args, :(α_original = y_mean + y_std * α))
         end
         push!(return_list, :(α=α_original))
     end
@@ -263,34 +275,45 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
     end
 
     if has_random_effects
-        for (i, ranef) in enumerate(model_ranef)
+        for ranef in model_ranef
+            ranef_name = string(ranef.variable)
             predictors_mn = Symbol("Xmn_z_", ranef_name)
             predictors_sd = Symbol("Xstd_z_", ranef_name)
-            predictors_scaled = Symbol("Xscaled_z_", ranef_name)
             ranef_matrix = Symbol("ranef_z_", ranef_name)
-            intercept_slopes = Symbol("β_z_", ranef_name)
-            predictors_scaled = Symbol("Xscaled_z_", ranef_name)
-            predictors_orig = Symbol("β_orig_z_", ranef_name)
+            intercept_ranef = Symbol("α_z_", ranef_name)
+            beta_orig = Symbol("β_orig_z_", ranef_name)
+            beta_out = Symbol("β_z_", ranef_name)
+            intercept_orig = Symbol("α_orig_z_", ranef_name)
+            intercept_out = Symbol("α_z_", ranef_name)
+            L_ranef = Symbol("L_z_", ranef_name)
+            R_out = Symbol("R_z_", ranef_name)
             if ranef.has_fixed_effects & ranef.has_intercept
                 if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
-                    push!(body.args, :($predictors_orig = ($intercept_slopes .+ $ranef_matrix[2:end, :]) ./ $predictors_sd))
+                    push!(body.args, :($beta_orig = $ranef_matrix[:, 2:end]' ./ $predictors_sd))
+                    push!(body.args, :($intercept_orig = $ranef_matrix[:,1]))
                 else
-                    push!(body.args, :($predictors_orig = (y_std ./ $predictors_sd) .* ($intercept_slopes .+ $ranef_matrix[2:end, :])))
+                    push!(body.args, :($beta_orig = (y_std ./ $predictors_sd) .* $ranef_matrix[:, 2:end]'))
+                    push!(body.args, :($intercept_orig = y_std * $ranef_matrix[:,1]))
                 end
-                push!(return_list, :($intercept_slopes=$predictors_orig)) #cheeky double name
-            if ranef.has_fixed_effects
+                push!(body.args, :($R_out = $L_ranef.L * $L_ranef.L'))
+                push!(return_list, :($beta_out=$beta_orig)) 
+                push!(return_list, :($intercept_out=$intercept_orig))
+                push!(return_list, :($R_out=$R_out))
+            elseif ranef.has_fixed_effects
                 if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
-                    push!(body.args, :(β_original = β ./ $predictors_sd))
+                    push!(body.args, :($beta_orig = ($intercept_slopes .+ $ranef_matrix) ./ $predictors_sd))
                 else
-                    push!(body.args, :(β_original = (y_std ./ $predictors_sd) .* β))
+                    push!(body.args, :($beta_orig = (y_std ./ $predictors_sd) .* ($intercept_slopes .+ $ranef_matrix[2:end, :])))
                 end
-            if ranef.has_intercept
+                push!(return_list, :($beta_out=$predictors_orig))
+            elseif ranef.has_intercept
                 if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
-            push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
-            push!(return_list, :(α=α_original))
-            push!(body.args, :(β_original = β ./ X_stds))
-            push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
-            push!(return_list, :(β=β_original))
+                    push!(body.args, :($intercept_orig = $ranef_matrix))
+                else
+                    push!(body.args, :($intercept_orig = y_std .* $ranef_matrix))
+                end
+                push!(return_list, :($intercept_out=$intercept_orig))
+            end
         end
     end
 
@@ -337,21 +360,21 @@ function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, m
     end
 
     # Generated Quantitites
-    push!(body.args, _generated_quantities(family, model_info.has_fixed_effects, model_info.has_intercept, model_info.has_random_effects))
+    push!(body.args, _generated_quantities(family, model_info.has_fixed_effects, model_info.has_intercept, model_info.has_random_effects, model_ranef))
 
 
     return body
 end
 
 #### Wrapper function for the above, to handle some additional logic
-function construct_model(family::Type{<:Distribution}, model_info::ModelInfo, model_ranef::Vector{RandomEffect}, prior::RegressionPrior, show_code::Bool=false)
+function construct_model(family::Type{<:Distribution}, model_info::ModelInfo, model_ranef::Union{Nothing, Vector{RandomEffect}}, prior::RegressionPrior, show_code::Bool=false)
 
     #handle logic here
     body = build_model_body(family, model_info, model_ranef, prior)
 
     # argument names
     args = [:y, :X]
-    model_info.has_random_effects && push!(args, [:n_gr, :group_idx, :group_predictors])
+    model_info.has_random_effects && push!(args, [:n_groups, :group_idx, :group_predictors]...)
     model_info.weighted && push!(args, :weights)
     
     # build model code

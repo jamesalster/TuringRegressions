@@ -62,7 +62,7 @@ end
 function extract_model_data(formula, data)
     # Apply schema - validates and types everything
     f = apply_schema(formula, schema(formula, data), MixedModel)
-    d = Tables.columntable(data)
+    d = columntable(data)
     
     # Extract y
     y = modelcols(f.lhs, d)
@@ -103,7 +103,6 @@ function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
     
     # Get predictor matrix from LHS using modelcols
     predictors = modelcols(term.lhs, d)[:, 2:end]
-    println(typeof(predictors))
 
     has_fixed_effects = size(predictors, 2) > 0
     

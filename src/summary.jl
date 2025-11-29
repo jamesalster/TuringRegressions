@@ -181,7 +181,7 @@ end
 
 # Default table options
 default_options = (;
-    tf=tf_compact,
+    #tf=tf_compact,
     header_crayon=crayon"bold",
     row_label_header_crayon=crayon"bold",
     crop=:horizontal,

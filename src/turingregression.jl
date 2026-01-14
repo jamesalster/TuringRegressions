@@ -278,3 +278,10 @@ function fit!(
 
     return TR
 end
+
+"""
+    default_prior(TR::TuringRegression{T})
+
+Convenience method that extracts the distribution family from a model.
+"""
+default_prior(TR::TuringRegression{T}) where {T} = default_prior(T)

@@ -47,10 +47,3 @@ function default_prior(family::Type{<:Distribution})::RegressionPrior
         error("No default prior implemented for model family: $(string(family))")
     end
 end
-
-"""
-    default_prior(TR::TuringRegression{T})
-
-Convenience method that extracts the distribution family from a model.
-"""
-default_prior(TR::TuringRegression{T}) where {T} = default_prior(T)

@@ -145,6 +145,12 @@ Parameter extraction functions accept:
 * `n_draws=-1` - Number of draws (-1 for all)
 * `collapse=true` - Collapse chains into single dimension
 
+## Notes
+
+Priors are passed in at the standardised variable scale.
+
+Accepted model families are `Normal`, `TDist`, `Bernoulli`, `Poisson`, and `NegativeBinomial`.
+
 ## Thanks
 
 This pacakge was heavily inspired by and uses small snippets of code from TuringJL

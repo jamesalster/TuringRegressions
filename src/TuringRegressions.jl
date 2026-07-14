@@ -22,7 +22,8 @@ using MacroTools: prettify
 using Suppressor: @suppress
 using StatsBase: mean, std
 using DataFrames: DataFrame
-using LinearAlgebra: I, dot
+using Tables: columntable
+using LinearAlgebra: I, dot, Symmetric, diagm
 using Colors: colormap
 using CategoricalArrays: categorical
 using CategoricalDistributions: UnivariateFinite

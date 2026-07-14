@@ -28,7 +28,7 @@ function clean_prior_string(x)
     replace(x, r"\{.*\}" => "", "\n" => " ")
 end
 
-# Helper function to know TuringGLM's default links
+# Helper function to know Turing Regression's default links
 function get_link(::Type{T}) where {T<:UnivariateDistribution}
     if T ∈ [Normal, TDist]
         return identity

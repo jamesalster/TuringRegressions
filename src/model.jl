@@ -45,9 +45,9 @@ function _random_effects(prior::Distribution, prior_fixef::Distribution, model_r
             n_predictors = size(ranef.predictors, 2)
             push!(body.args, quote
                 $variance_ranef ~ filldist($prior, $n_predictors)
-                $ranef_matrix_raw ~ filldist(Normal(), n_groups[$i])
-                $intercept_ranef ~ filldist($prior_fixef, $(n_predictors)) #ideally with 0 included?
-                $ranef_matrix = $ranef_matrix_raw .* $variance_ranef .+ intercept_ranef
+                $intercept_ranef ~ filldist($prior_fixef, $n_predictors) #ideally with 0 included?
+                $ranef_matrix_raw ~ filldist(Normal(), $n_predictors, n_groups[$i])
+                $ranef_matrix = ($intercept_ranef .+ $variance_ranef .* $ranef_matrix_raw)'
             end)
         elseif ranef.has_intercept
             n_predictors = 1
@@ -100,14 +100,12 @@ function _linear_model(has_intercept::Bool, has_fixed_effects::Bool, has_random_
             predictors_scaled = Symbol("Xscaled_z_", ranef_name)
 
             if ranef.has_intercept & ranef.has_fixed_effects
-                push!(terms, :($ranef_matrix[group_idx[:,1], 1]))
-                #push!(terms, :($predictors_scaled * $ranef_matrix[2:end, group_idx[:,$i]]))
-                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,1], 2:end]; dims = 2)[:]))
+                push!(terms, :($ranef_matrix[group_idx[:,$i], 1]))
+                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,$i], 2:end]; dims = 2)[:]))
             elseif ranef.has_fixed_effects
-                #push!(terms, :($predictors_scaled * $ranef_matrix[:,group_idx[:,$i]]))
-                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,1], :]; dims = 2)[:]))
+                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,$i], :]; dims = 2)[:]))
             elseif ranef.has_intercept
-                push!(terms, :($ranef_matrix[group_idx[:,1]]))
+                push!(terms, :($ranef_matrix[group_idx[:,$i]]))
             end
         end
     end
@@ -281,38 +279,56 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
             predictors_sd = Symbol("Xstd_z_", ranef_name)
             ranef_matrix = Symbol("ranef_z_", ranef_name)
             intercept_ranef = Symbol("α_z_", ranef_name)
+            variance_ranef = Symbol("σ_z_", ranef_name)
             beta_orig = Symbol("β_orig_z_", ranef_name)
             beta_out = Symbol("β_z_", ranef_name)
             intercept_orig = Symbol("α_orig_z_", ranef_name)
             intercept_out = Symbol("α_z_", ranef_name)
+            sd_orig = Symbol("σ_orig_z_", ranef_name)
+            sd_out = Symbol("σ_z_", ranef_name)
             L_ranef = Symbol("L_z_", ranef_name)
             R_out = Symbol("R_z_", ranef_name)
+            offset_orig = Symbol("offset_orig_z_", ranef_name)
+            offset_out = Symbol("offset_z_", ranef_name)
             if ranef.has_fixed_effects & ranef.has_intercept
                 if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
                     push!(body.args, :($beta_orig = $ranef_matrix[:, 2:end]' ./ $predictors_sd))
-                    push!(body.args, :($intercept_orig = $ranef_matrix[:,1]))
+                    push!(body.args, :($intercept_orig = $ranef_matrix[:,1] .- [dot($predictors_mn, $beta_orig[:,g]) for g in axes($beta_orig,2)]))
+                    push!(body.args, :($sd_orig = vcat($variance_ranef[1], $variance_ranef[2:end] ./ $predictors_sd)))
                 else
                     push!(body.args, :($beta_orig = (y_std ./ $predictors_sd) .* $ranef_matrix[:, 2:end]'))
-                    push!(body.args, :($intercept_orig = y_std * $ranef_matrix[:,1]))
+                    push!(body.args, :($intercept_orig = y_std .* $ranef_matrix[:,1] .- [dot($predictors_mn, $beta_orig[:,g]) for g in axes($beta_orig,2)]))
+                    push!(body.args, :($sd_orig = vcat(y_std * $variance_ranef[1], (y_std ./ $predictors_sd) .* $variance_ranef[2:end])))
                 end
                 push!(body.args, :($R_out = $L_ranef.L * $L_ranef.L'))
-                push!(return_list, :($beta_out=$beta_orig)) 
+                push!(return_list, :($beta_out=$beta_orig))
                 push!(return_list, :($intercept_out=$intercept_orig))
+                push!(return_list, :($sd_out=$sd_orig))
                 push!(return_list, :($R_out=$R_out))
             elseif ranef.has_fixed_effects
                 if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
-                    push!(body.args, :($beta_orig = ($intercept_slopes .+ $ranef_matrix) ./ $predictors_sd))
+                    push!(body.args, :($beta_orig = $ranef_matrix' ./ $predictors_sd))
+                    push!(body.args, :($sd_orig = $variance_ranef ./ $predictors_sd))
                 else
-                    push!(body.args, :($beta_orig = (y_std ./ $predictors_sd) .* ($intercept_slopes .+ $ranef_matrix[2:end, :])))
+                    push!(body.args, :($beta_orig = (y_std ./ $predictors_sd) .* $ranef_matrix'))
+                    push!(body.args, :($sd_orig = (y_std ./ $predictors_sd) .* $variance_ranef))
                 end
-                push!(return_list, :($beta_out=$predictors_orig))
+                # Hidden centering offset (no ranef intercept to absorb X-centering):
+                # not user-facing, consumed only by predict.jl (T1b) via a private DimStack layer.
+                push!(body.args, :($offset_orig = [-dot($predictors_mn, $beta_orig[:,g]) for g in axes($beta_orig,2)]))
+                push!(return_list, :($beta_out=$beta_orig))
+                push!(return_list, :($sd_out=$sd_orig))
+                push!(return_list, :($offset_out=$offset_orig))
             elseif ranef.has_intercept
                 if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
                     push!(body.args, :($intercept_orig = $ranef_matrix))
+                    push!(body.args, :($sd_orig = $variance_ranef))
                 else
                     push!(body.args, :($intercept_orig = y_std .* $ranef_matrix))
+                    push!(body.args, :($sd_orig = y_std .* $variance_ranef))
                 end
                 push!(return_list, :($intercept_out=$intercept_orig))
+                push!(return_list, :($sd_out=$sd_orig))
             end
         end
     end

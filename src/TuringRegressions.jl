@@ -43,7 +43,6 @@ include("comparison.jl")
 export TuringRegression,
     turing_glm,
     fit!,
-    pretty,
     model_warnings,
     draws,
     outcome,

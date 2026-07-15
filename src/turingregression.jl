@@ -287,7 +287,7 @@ function fit!(
             push!(fixef_labels, param)
         end
     end
-    fixef_arr = DimArray(vcat(fixef_arrays...), (Dim{:param}(fixef_labels), draw_dim, chain_dim))
+    fixef_arr = DimArray(vcat(fixef_arrays...), (Dim{:fixef}(fixef_labels), draw_dim, chain_dim))
 
     layers = Dict{Symbol,Any}(:fixef => fixef_arr)
 
@@ -335,6 +335,11 @@ function fit!(
             layers[Symbol(group, "_offset")] = DimArray(offset_arr, (Dim{:group}(re.levels), draw_dim, chain_dim))
         end
     end
+
+    # Internals
+    internals_names = TR.samples.name_map[:internals]
+    layers[:internals] = DimArray(permutedims(TR.samples[internals_names].value, (2, 1, 3)),
+        (Dim{:internal}(internals_names), Dim{:draw}, Dim{:chain}))
 
     TR.parameters = DimStack(NamedTuple(layers))
     return TR

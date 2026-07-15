@@ -15,7 +15,7 @@ Core loop: `turing_glm(formula, data, family)` → `fit!` → `summary`/`fixef`/
 
 - C1. Julia. Turing.jl 0.36.3 for MCMC. Sampler default NUTS, parallel MCMCThreads, N=2000, nchains=4.
 - C2. Data auto-standardised inside model. User priors must be scaled for std predictors (mean 0, sd 1).
-- C3. Params stored/returned as `DimArray` dims `(:param, :draw, :chain)`. Chains collapsible to one `:draw` dim.
+- C3. Params stored/returned as `TR.parameters::DimStack` (post-T1a2, was single `DimArray`). One layer per param group (`:fixef`, per-ranef `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`), each layer's own dims incl `:draw, :chain`. Chains collapsible to one `:draw` dim via `draws(...)`.
 - C4. Families supported: `Normal, TDist, Bernoulli, Poisson, NegativeBinomial`. Others → `error`.
 - C5. Links fixed per family (util `get_link`): Normal/TDist→identity, Bernoulli→logit, Poisson/NegBin→log.
 - C6. Model code generated as Julia `Expr` at runtime, `eval`'d into `@model turing_regression`. Not hand-written.
@@ -37,15 +37,23 @@ Model creation:
 Fitting:
 - `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), N=2000, nchains=4, quiet=true, kwargs...)` → mutates TR. Recovers unstd params via `generated_quantities` → `TR.parameters` DimArray.
 
-Param extraction (all accept `fun`, kwargs `drop_warmup=200, n_draws=-1, collapse=true, dropdims=true`):
-- `parameters(TR, fun=nothing)` — all params.
-- `fixef(TR, fun=nothing)` — α + β only.
-- `internals(TR, fun=nothing)` — sampler diagnostics (lp, tree_depth, etc), from `samples.name_map[:internals]`.
-- `coef(TR, fun=median)` — point est, = `fixef(TR, fun)`. `@info` prints reduce fn.
-- `get_parameters(TR, params::Vector{Symbol})` — named subset, renames β[i]→X_names.
-- `parameter_names(TR, params=...)` — friendly labels.
-- `outcome(TR)` → y as DimArray. `fixed_effects(TR)` → X DimArray (`?` docstring calls it `predictors`, readme too, but fn named `fixed_effects` — name mismatch).
+Param extraction — REWRITTEN T1a2 (src/parametermethods.jl). Old `parameters`/`fixef`/`internals`/`coef`/`get_parameters`/`parameter_names` all REMOVED, replaced by `draws`:
+- `draws(TR; drop_warmup=200, n_draws=-1, collapse=true)` → whole `TR.parameters` `DimStack` (all layers), warmup dropped/chains collapsed per kwargs.
+- `draws(TR, type::Symbol; drop_warmup=200, n_draws=-1, collapse=true)` → single layer as `DimArray`. `type` must be one of `propertynames(TR.parameters)` (else `ArgumentError` listing valid types): `:fixef`, `:{group}` (ranef effect×group), `:{group}_sd`, `:{group}_corr` (only if correlated ranef), `:{group}_offset` (only slope-only-no-intercept ranef, internal use), `:internals`.
+- `draws(fun::Function, TR, type::Symbol; dropdims=true, kwargs...)` → aggregates draws(+chains) with `fun` (e.g. `median`), drops resulting singleton dims by default.
+- `outcome(TR)` → y as `DimArray` (`Dim{:row}`).
+- `predictors(TR, type::Symbol)` → `:fixef` implemented (X `DimArray`, dims `Dim{:row}, Dim{:var}`); `:ranef` → `error("Not implemented")` (TODO).
 - `outcome_as_distribution(TR)` — Bernoulli only → `UnivariateFinite`.
+
+`TR.parameters::DimStack` layers (built `fit!`, turingregression.jl:265-344):
+- `:fixef` — α, β (renamed to `TR.X_names`), aux params (σ/ν/ϕ). Dims `Dim{:fixef}, :draw, :chain`.
+- per ranef grouping term, layer named `group = re.variable` — Dims `Dim{:effect}` (Intercept+slopes), `Dim{:group}` (levels), `:draw`, `:chain`.
+- `{group}_sd` — group-level SDs, `Dim{:effect}, :draw, :chain`.
+- `{group}_corr` — only if correlated intercept+slopes (full `L*L'`), `Dim{:effect}, Dim{:effect2}, :draw, :chain`.
+- `{group}_offset` — only slope-only-no-intercept ranef terms (centering offset absorbing X-centering, no ranef intercept to absorb it); NOT user-facing, consumed internally by predict.jl (T1b) only. `Dim{:group}, :draw, :chain`.
+- `:internals` — sampler diagnostics (lp, tree_depth etc), `Dim{:internal}, :draw, :chain`.
+
+NOTE: predict.jl NOT yet migrated to `draws` API — still calls removed `get_parameters` (predict.jl:57,62,116,119,127). Currently broken/stale; blocks T1b completion.
 
 Prediction (`type ∈ :posterior|:epred|:linpred`):
 - `predict(TR, X::Matrix, fun=nothing; type=:posterior, kwargs...)`
@@ -81,11 +89,11 @@ Types:
 
 - V1. Family ∉ {Normal,TDist,Bernoulli,Poisson,NegativeBinomial} → `error` at `turing_glm`.
 - V2. `fixef`/`predict`/etc on unfitted model (`samples===nothing`) → `ArgumentError "not been fitted"`.
-- V3. `parameters(TR, median)` ≈ Bayesian point ests ≈ GLM MLE coefs, atol 0.025 on standardised recovery (test Vs. GLM). Holds Normal/Poisson/NegBin (runtests:31,42,56). Bernoulli looser → V13.
+- V3. `draws(median, TR, :fixef)` ≈ Bayesian point ests ≈ GLM MLE coefs, atol 0.025 on standardised recovery (test Vs. GLM). Holds Normal/Poisson/NegBin (runtests:31,42,56). Bernoulli looser → V13. `?` runtests not yet updated to new `draws` API — re-verify.
 - V4. `predict(type=:epred)` ≈ `GLM.predict` (test atol 0.1 Normal, 1 Poisson, 2 NegBin, 0.05 Bernoulli).
 - V5. Link relations: `linpred == log(epred)` for log-link; `linpred == epred` for identity.
 - V6. `var(posterior) > var(epred)` — posterior pred adds noise. `var(posterior) > var(epred)` also count.
-- V7. `get_parameters` shape = (n_params, (N-drop_warmup)*nchains) collapsed; 3-dim if `collapse=false`.
+- V7. `draws(TR, type)` shape = (n_effect_dims..., (N-drop_warmup)*nchains) collapsed; extra trailing `:chain` dim if `collapse=false`.
 - V8. `n_draws > available post-warmup` → `ErrorException`.
 - V9. Returned param labels: `[:α, :<X_names...>, aux...]`; α first when present.
 - V10. Standardised→original param recovery in `_generated_quantities`: β_orig = (y_std/X_stds).*β (gaussian) or β./X_stds (count/binary); α likewise with `dot(X_means, β_orig)`.
@@ -101,7 +109,7 @@ Types:
 
 id|st|task|cites
 T1a1|x|: finish mixed model on `random_effects` git branch - done, details in git.
-T1a2|.|OUTPUT SHAPE - turingregression output change to DimStack (done) and redo parameter methods - discuss with user.|change Vs as we go|
+T1a2|x|OUTPUT SHAPE - turingregression output changed to DimStack, parameter methods redone as `draws`/`outcome`/`predictors` (src/parametermethods.jl). Old `parameters`/`fixef`/`internals`/`coef`/`get_parameters`/`parameter_names` removed. predict.jl NOT yet migrated (T1b) — still calls removed `get_parameters`, currently broken.|C3,I.param
 T1b|.|predict.jl ranef support, depends T1. Today `linpred` (src/predict.jl) zero random-effects awareness — sums only α+X*β, ignores TR.z entirely. Add: accept new-data grouping-factor levels (unseen level → clear error, no silent NA/missing); look up per-group ranef draws via new `ranef(TR,group_var)` accessor (intercept dev + slope devs + `:<group>_offset` layer when present), add group contribution to μ for `:linpred`/`:epred`/`:posterior`. Handle `predict(TR)` (fitted TR.X, groups known) and `predict(TR,new_data::DataFrame)` (map new_data grouping col values onto TR.z levels). Files: src/predict.jl. TESTS (test/runtests.jl "Random Effects Prediction" testset, written now, fails until T1b lands): predict on fitted data reproduces in-sample fit reasonably; predict on new data w/ known levels matches manual reconstruction from TR.parameters; predict w/ unseen grouping level errors clearly|T1,I.pred,V4
 T1c|.|MINOR, depends T1: grouping-var collision guard. 2 ranef terms sharing a grouping var (e.g. `(x1|g)+(x2|g)`) collide on DimStack layer name `:g` — 2nd term's layer silently overwrites 1st, pre-existing risk carried forward (same collision existed in old string-label scheme, not a regression). Add `@warn` in `extract_model_data`/`turing_glm` (src/formula_handlers.jl or src/turingregression.jl) when `length(unique(variable for term in Z))<length(Z)`, naming colliding variable. Warning only — real fix (per-term layer namespacing) deferred|T1
 T2|.|DROP `pretty` — unexport (TuringRegressions.jl:44) + delete test line (runtests:282). No alias; `summary` already does it|B1,I.display
@@ -110,7 +118,7 @@ T4|.|fix `show` NegBin branch: `T == NegativeBinomial2` never true (T is Negativ
 T5|.|Canonical NegBin = LOCAL `NegativeBinomial2` (utils.jl:46). Fix predict.jl:128 to use local not `TuringGLM.NegativeBinomial2`. Then REMOVE TuringGLM from Project.toml — it's the only use (P1); heavy dep gone|C11,B2
 T6|.|repair commented-out testsets (Model Creation, Model Fit) — ref stale fields (`unstd_params`, `standardized`, `Z_names`) not on struct|V2
 T7|.|fix test var-name mismatches: `mod`/`model_count`/`mod_empty` vs defined `model`/`mod_count`/`model_empty`|
-T8|.|reconcile `fixed_effects` fn name vs `predictors` docstring/readme/API|I.param
+T8|x|resolved by T1a2: fn is now `predictors(TR, type)`, `fixed_effects` name dropped entirely. Readme/docstring now consistent — verify readme text updated too.|I.param
 T9|.|readme API lists `linpred`/`epred`/`posterior_pred` as public, not exported. Export or relabel internal.|I.pred
 T10|.|`_weighted_likelihood` exists but no test + no exposed `weights` path in readme; verify weighted fit works|C12
 T11|.|readme usage block corrupted (compressed `[271 items...]`, typos `TuringGLModels`, `fucntion`). Rewrite.|I

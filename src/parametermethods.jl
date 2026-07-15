@@ -19,6 +19,14 @@ function _drop_single_dims(DA::Union{DimArray, DimStack})
     return dropdims(DA; dims=Tuple(dims_to_drop))
 end
 
+# Aggregate a draws/chain-dimensioned DimArray with fun over :draw (+:chain if present)
+function _aggregate_draws(f::Function, arr::DimArray; dropdims=true)
+    dims_to_aggregate = hasdim(arr, :chain) ? [:draw, :chain] : [:draw]
+    dimindices = ntuple(i -> dimnum(arr, dims_to_aggregate[i]), length(dims_to_aggregate))
+    out = mapslices(f, arr; dims=dimindices)
+    return dropdims ? _drop_single_dims(out) : out
+end
+
 """
     draws(TR::TuringRegression, type::Symbol; drop_warmup=200, n_draws=-1, collapse=true)
     draws(f::Function, TR::TuringRegression, type::Symbol; dropdims=true, drop_warmup=200, n_draws=-1, collapse=true)
@@ -48,10 +56,7 @@ function draws(TR::TuringRegression, type::Symbol; kwargs...)
 end
 function draws(f::Function, TR::TuringRegression, type::Symbol; dropdims=true, kwargs...)
     arr = draws(TR, type; kwargs...)
-    dims_to_aggregate = hasdim(arr, :chain) ? [:draw, :chain] : [:draw]
-    dimindices = ntuple(i -> dimnum(arr, dims_to_aggregate[i]), length(dims_to_aggregate))
-    out = mapslices(f, arr; dims=dimindices)
-    return dropdims ? _drop_single_dims(out) : out
+    return _aggregate_draws(f, arr; dropdims)
 end
 
 """

@@ -1,142 +1,107 @@
 # SPEC — TuringRegressions.jl
 
-Distilled from code 2026-07-13. WIP package. `?` = unconfirmed, user verify.
+Distilled code 2026-07-15. WIP package. `?` = unconfirmed, user verify.
 
 ## §G GOAL
 
-Bayesian GLM package for Julia. Alternative to TuringGLM.jl, more features.
+Bayesian GLM package Julia. Alternative TuringGLM.jl, more features.
 Fit regression via Turing.jl NUTS. Output = `DimArray` (DimensionalData) →
-orderless named indexing of params/draws/chains. User writes `@formula`, picks
-family, calls `fit!`, then extracts coefs / predicts / metrics / compares / plots.
+orderless named indexing params/draws/chains. User writes `@formula`, picks
+family, calls `fit!`, extracts coefs / predicts / metrics / compares / plots.
 
-Core loop: `turing_glm(formula, data, family)` → `fit!` → `summary`/`fixef`/`predict`.
+Core loop: `turing_glm(formula, data, family)` → `fit!` → `summary`/`draws`/`predict`.
 
 ## §C CONSTRAINTS
 
-- C1. Julia. Turing.jl 0.36.3 for MCMC. Sampler default NUTS, parallel MCMCThreads, N=2000, nchains=4.
-- C2. Data auto-standardised inside model. User priors must be scaled for std predictors (mean 0, sd 1).
-- C3. Params stored/returned as `TR.parameters::DimStack` (post-T1a2, was single `DimArray`). One layer per param group (`:fixef`, per-ranef `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`), each layer's own dims incl `:draw, :chain`. Chains collapsible to one `:draw` dim via `draws(...)`.
+- C1. Julia. Turing.jl 0.36.3 MCMC. Sampler default NUTS, parallel MCMCThreads, N=2000, nchains=4.
+- C2. Data auto-standardised inside model. User priors currently scaled to std predictors (mean 0, sd 1) — **T4 flips this to original scale.**
+- C3. Params stored/returned `TR.parameters::DimStack`. One layer per group (`:fixef`, per-ranef `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`), layer's own dims incl `:draw, :chain`. Chains collapsible to one `:draw` dim via `draws(...)`.
 - C4. Families supported: `Normal, TDist, Bernoulli, Poisson, NegativeBinomial`. Others → `error`.
 - C5. Links fixed per family (util `get_link`): Normal/TDist→identity, Bernoulli→logit, Poisson/NegBin→log.
-- C6. Model code generated as Julia `Expr` at runtime, `eval`'d into `@model turing_regression`. Not hand-written.
-- C7. Makie plots optional — loaded lazily via `Requires.@require` in `__init__`, NOT native pkg extension. No `ext/` dir, no `[weakdeps]`. `?` migrate to native ext later.
-- C8. Standardisation asymmetric: X always scaled if fixed effects; y scaled ONLY for Normal/TDist (count/binary families keep raw y, likelihood on link scale).
-- C9. Reexports: DimensionalData, Distributions, `logit`/`logistic`, `@formula` (from MixedModels).
-- C10. `@formula` sourced from MixedModels (not StatsModels) → allows `(1|g)` ranef syntax.
-- C11. NegBin uses Stan-style `NegativeBinomial2(μ, ϕ)` reparam (mean/dispersion), copied from TuringGLM. `p = max(1/(1+μ/ϕ), 1e-6)` for stability.
-- C12. Likelihood via `@addlogprob!` not `y ~ dist`, to allow weights + scaling. `BernoulliLogit`/`LogPoisson` used (log-scale, numerically stable).
-- C13. Scaling in→out is fragile. Model fits on standardised X (+y for gaussian); params recovered to original scale in `_generated_quantities` (V10). Every family branches differently (C8). Adding random effects makes this MUCH harder — τ/zⱼ scale must compose with X_stds/y_std correctly. Touch scaling logic → re-verify all families against GLM (V3,V4).
+- C6. Model code generated Julia `Expr` at runtime, `eval`'d into `@model turing_regression`. Not hand-written. `show_code=true` prints generated source — **T5 re-verifies this path.**
+- C7. Makie plots via native package extension (`ext/TuringRegressionsMakieExt.jl`, `[weakdeps]`/`[extensions]` in Project.toml). No `Requires`, no `Colors` dep.
+- C8. NegBin canonical form: local `NegativeBinomial2(μ, mean/dispersion)`, `max(1/(1+μ/ϕ), 1e-6)`. No TuringGLM dependency (removed).
+- C9. Touch scaling logic (T3/T4) → re-verify all families against GLM (V3, V4, V13).
 
 ## §I INTERFACES (public surface)
 
 Model creation:
 - `turing_glm(formula::FormulaTerm, data::DataFrame, family, priors=default_prior(family), weights=nothing, show_code=false)` → `TuringRegression{family}`
-- `turing_glm(y::Vector, X::Array, ::Type{T}; names=Symbol[], kwargs...)` — array form, synth formula, forwards.
+- `turing_glm(y::Vector, X::Array, ::Type{T}; names=Symbol[], kwargs...)` array form, synthesises formula, forwards.
 - `default_prior(family)` / `default_prior(TR)` → `RegressionPrior` (intercept N(0,5), fixef N(0,2), ranef Exp(1), aux family-dep).
 
 Fitting:
-- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), N=2000, nchains=4, quiet=true, kwargs...)` → mutates TR. Recovers unstd params via `generated_quantities` → `TR.parameters` DimArray.
+- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), N=2000, nchains=4, quiet=true, kwargs...)` mutates TR. Recovers unstandardised params via `generated_quantities` into `TR.parameters` (DimStack).
 
-Param extraction — REWRITTEN T1a2 (src/parametermethods.jl). Old `parameters`/`fixef`/`internals`/`coef`/`get_parameters`/`parameter_names` all REMOVED, replaced by `draws`:
-- `draws(TR; drop_warmup=200, n_draws=-1, collapse=true)` → whole `TR.parameters` `DimStack` (all layers), warmup dropped/chains collapsed per kwargs.
-- `draws(TR, type::Symbol; drop_warmup=200, n_draws=-1, collapse=true)` → single layer as `DimArray`. `type` must be one of `propertynames(TR.parameters)` (else `ArgumentError` listing valid types): `:fixef`, `:{group}` (ranef effect×group), `:{group}_sd`, `:{group}_corr` (only if correlated ranef), `:{group}_offset` (only slope-only-no-intercept ranef, internal use), `:internals`.
-- `draws(fun::Function, TR, type::Symbol; dropdims=true, kwargs...)` → aggregates draws(+chains) with `fun` (e.g. `median`), drops resulting singleton dims by default.
-- `outcome(TR)` → y as `DimArray` (`Dim{:row}`).
-- `predictors(TR, type::Symbol)` → `:fixef` implemented (X `DimArray`, dims `Dim{:row}, Dim{:var}`); `:ranef` → `error("Not implemented")` (TODO).
-- `outcome_as_distribution(TR)` — Bernoulli only → `UnivariateFinite`.
+Param extraction (`src/parametermethods.jl`):
+- `draws(TR; drop_warmup=200, n_draws=-1, collapse=true)` whole `TR.parameters` DimStack (all layers), warmup dropped/chains collapsed per kwargs.
+- `draws(TR, type::Symbol; drop_warmup=200, n_draws=-1, collapse=true)` single layer DimArray. `type` must be one of `propertynames(TR.parameters)` else `ArgumentError`. Valid types: `:fixef`, `:{group}` (ranef effect×group), `:{group}_sd`, `:{group}_corr` (only if correlated ranef), `:{group}_offset` (only slope-only-no-intercept ranef).
+- `draws(f::Function, TR, type::Symbol; dropdims=true, kwargs...)` apply reducer `f` over draw/chain dims.
+- `outcome(TR)` → DimArray of y.
+- `predictors(TR, type)` → DimArray of X (name split from old `fixed_effects`).
+- `outcome_as_distribution(TR)` → `UnivariateFinite` (classification metrics interop).
 
-`TR.parameters::DimStack` layers (built `fit!`, turingregression.jl:265-344):
-- `:fixef` — α, β (renamed to `TR.X_names`), aux params (σ/ν/ϕ). Dims `Dim{:fixef}, :draw, :chain`.
-- per ranef grouping term, layer named `group = re.variable` — Dims `Dim{:effect}` (Intercept+slopes), `Dim{:group}` (levels), `:draw`, `:chain`.
-- `{group}_sd` — group-level SDs, `Dim{:effect}, :draw, :chain`.
-- `{group}_corr` — only if correlated intercept+slopes (full `L*L'`), `Dim{:effect}, Dim{:effect2}, :draw, :chain`.
-- `{group}_offset` — only slope-only-no-intercept ranef terms (centering offset absorbing X-centering, no ranef intercept to absorb it); NOT user-facing, consumed internally by predict.jl (T1b) only. `Dim{:group}, :draw, :chain`.
-- `:internals` — sampler diagnostics (lp, tree_depth etc), `Dim{:internal}, :draw, :chain`.
-
-NOTE: predict.jl NOT yet migrated to `draws` API — still calls removed `get_parameters` (predict.jl:57,62,116,119,127). Currently broken/stale; blocks T1b completion.
-
-Prediction (`type ∈ :posterior|:epred|:linpred`):
-- `predict(TR, X::Matrix, fun=nothing; type=:posterior, kwargs...)`
-- `predict(TR, fun=nothing)` — fitted data.
-- `predict(TR, new_data::DataFrame, fun=nothing)` — rebuild X from formula.
-- internal: `linpred` (Xβ+α), `epred` (invlink∘linpred), `posterior_pred` (add family noise).
+Predict (`src/predict.jl`, real working API):
+- `predict(TR, X=TR.X; type=:posterior, kwargs...)` / `predict(f::Function, TR, X=TR.X; type, kwargs...)`
+- `predict(TR, new_data::DataFrame, ...)` rebuilds X from formula, remaps random-effect levels (`new_random_effects`, `allow_new_levels` kwarg).
+- `type ∈ (:posterior, :epred, :linpred)`.
+- Internal: `linpred` (Xβ+α [+Zu]), `epred` (invlink∘linpred), `posterior_pred` (adds family noise).
 
 Metrics (StatisticalMeasures.jl):
-- `calculate_metrics(TR, metrics::Vector, fun=nothing; threshold=0.5, kwargs...)` — epred-based. Bernoulli branch: AUC + pseudo_r2 special-cased, rest categorical.
-- `default_metrics(TR, fun=nothing)` — regression [rsq,rmse,mae]; Bernoulli [accuracy,kappa,TPR,TNR,auc,pseudo_r2].
-- `pseudo_r2(preds, y)` — McFadden, exported.
+- `calculate_metrics(TR, metrics::Vector, fun=nothing; threshold=0.5, kwargs...)` epred-based. Bernoulli branch: AUC + pseudo_r2 special-cased, rest categorical.
+- `default_metrics(TR, fun=nothing)` regression → `[rsq, rmse, mae]`; Bernoulli → `[accuracy, kappa, TPR, TNR, auc, pseudo_r2]`.
+- `pseudo_r2(preds, y)` McFadden, exported.
 
-Comparison (ParetoSmooth.jl):
-- `psis_loo(TR)` → PsisLoo. `loo_compare(models...)` / `loo_compare([models])` — kwargs `model_names`.
+Comparison (ParetoSmooth.jl, `src/comparison.jl`):
+- `psis_loo(TR)` → PsisLoo.
+- `loo_compare(models::TuringRegression...)` / `loo_compare(models::AbstractVector{<:TuringRegression})`, kwargs forwarded.
 
-Display:
-- `Base.show(io, TR; warnings=true)` — family/formula/prior/obs/samples + warnings.
-- `Base.summary(io, TR; funs=[mean,std], quantiles=[0.025,0.975], return_table=false, drop_warmup=nothing, show_metrics=false, kwargs...)` — migrated off dead `_get_parameter_names`/`parameter_names`/`draws_idx` onto `draws(TR, :fixef; drop_warmup, collapse=false, kwargs...)`. Prints fixef table + per-grouping-term Random Effects tables (SD table always; Correlation matrix only if `{group}_corr` layer present — was ZERO ranef output before this session). Metrics table now opt-in via `show_metrics=true` (was unconditional). `kwargs...` forwarded to `draws`/`default_metrics`.
-- `model_warnings(TR)` / `model_warnings(chain_info)` — rhat/ess/mcse thresholds.
-- `pretty` — REMOVED (T2 done): unexported, no alias. `summary` covers it.
+Display (`src/summary.jl`, `src/turingregression.jl`):
+- `Base.show(io, TR; warnings=true)` family/formula/prior/obs/samples + warnings.
+- `Base.summary(io, TR; funs=[mean,std], quantiles=[0.025,0.975], return_table=false, drop_warmup=nothing, show_metrics=false, kwargs...)`. Prints fixef table + per-grouping-term Random Effects tables (SD table always; Correlation matrix only if `{group}_corr` layer present). Metrics table opt-in via `show_metrics=true`.
+- `model_warnings(TR)` — rhat/ess/mcse based `@warn`/`@info`.
 
-Plots (Requires/Makie, exported inside `__init__`):
-- `lineribbon` — Makie `@recipe`, median line + quantile bands (widths [0.66,0.95], greys).
-- `conditional_dependency(TR, var::Symbol; type=:posterior)` — vary one var, hold rest at mean.
-- `pp_check_hist` / `pp_check_dens` / `pp_check_dens_overlay(TR; ...)` — posterior predictive checks.
+Plots (Makie ext, `ext/TuringRegressionsMakieExt.jl`):
+- `lineribbon`/`lineribbon!`, `conditional_dependency`, `pp_check_dens`, `pp_check_dens_overlay`, `pp_check_hist`. Stubs exported from main package, methods added by extension when Makie loaded.
 
 Types:
-- `TuringRegression{T<:Distribution}` mutable — formula, model fn, prior, link, y, X, z, weights, X_names, z_names, modelinfo, modelcode, samples, parameters.
-- `ModelInfo` — has_intercept/has_fixed_effects/has_random_effects/weighted flags.
-- `RegressionPrior` `@kwdef` — intercept/fixed_effects/random_effects/auxiliary Distributions.
+- `TuringRegression{T<:Distribution}` — holds formula, X/X_names, y, family, prior, parameters, model info.
+- `ModelInfo` — `has_intercept`/`has_fixed_effects`/`has_random_effects`/`weighted`.
+- `RegressionPrior` — `intercept`/`fixed_effects`/`random_effects`/`auxiliary`.
 
 ## §V INVARIANTS
 
-- V1. Family ∉ {Normal,TDist,Bernoulli,Poisson,NegativeBinomial} → `error` at `turing_glm`.
-- V2. `fixef`/`predict`/etc on unfitted model (`samples===nothing`) → `ArgumentError "not been fitted"`.
-- V3. `draws(median, TR, :fixef)` ≈ Bayesian point ests ≈ GLM MLE coefs, atol 0.025 on standardised recovery (test Vs. GLM). Holds Normal/Poisson/NegBin (runtests:31,42,56). Bernoulli looser → V13. `?` runtests not yet updated to new `draws` API — re-verify.
-- V4. `predict(type=:epred)` ≈ `GLM.predict` (test atol 0.1 Normal, 1 Poisson, 2 NegBin, 0.05 Bernoulli).
-- V5. Link relations: `linpred == log(epred)` for log-link; `linpred == epred` for identity.
-- V6. `var(posterior) > var(epred)` — posterior pred adds noise. `var(posterior) > var(epred)` also count.
-- V7. `draws(TR, type)` shape = (n_effect_dims..., (N-drop_warmup)*nchains) collapsed; extra trailing `:chain` dim if `collapse=false`.
-- V8. `n_draws > available post-warmup` → `ErrorException`.
-- V9. Returned param labels: `[:α, :<X_names...>, aux...]`; α first when present.
-- V10. Standardised→original param recovery in `_generated_quantities`: β_orig = (y_std/X_stds).*β (gaussian) or β./X_stds (count/binary); α likewise with `dot(X_means, β_orig)`.
-- V11. summary auto drop_warmup: 0 if N<400 else 200.
-- V12. rhat>1.05 / ess<100 / mcse>5%std → `@warn`; softer thresholds → `@info`.
-- V13. Bernoulli param recovery vs GLM looser: coef atol 0.05, epred atol 0.05 (runtests:68,71). Split from V3.
-- V14. Weighted fit with `weights ≡ 1` == unweighted fit (params equal, tolerance). Guards `_weighted_likelihood` (model.jl:105) — currently ZERO tests. Untested until written.
-- V15. `predict(TR, new_data::DataFrame)` uses RAW new X (formula_handlers.jl:9) with ORIGINAL-scale stored β (model.jl:174 β_original). No re-standardisation of new X. epred on new data ≈ GLM.predict on same new data. Guards against re-introducing standardise in predict path.
-- V16. `extract_random_effect` predictor slicing must condition on `has_intercept(term.lhs)`: drop col 1 only when true, else use all cols. Guards `(0+x...|g)` ranef terms getting correct predictor count/identity.
-- V17. Non-ranef formulas must skip the `MixedModels.MixedModel` construction path entirely in `extract_model_data` — use plain `StatsModels.modelmatrix`/`ModelFrame` when `Z` is empty, only route through `MixedModels` when ranef terms present. Guards `turing_glm` working for ordinary (no `|`) formulas.
+- V1. Family restricted to `{Normal, TDist, Bernoulli, Poisson, NegativeBinomial}`; others → `error` at `turing_glm` construction.
+- V2. `draws(TR, type)` with invalid `type` → `ArgumentError`.
+- V3. Fixef point estimates (posterior mean) vs GLM MLE within tolerance — Normal/Poisson/NegBin atol 0.025 (runtests), Bernoulli looser (see V13).
+- V4. `epred` posterior mean vs `GLM.predict` within tolerance (family-dependent, see runtests) for Normal/Poisson/NegBin/Bernoulli.
+- V5. Link relations: `linpred == log(epred)` for log-link families; `linpred == epred` for identity-link families.
+- V6. `var(posterior_pred) > var(epred)` — posterior predictive adds observation noise (also holds for count families).
+- V7. `draws(TR, type)` shape `(n_effect_dims..., (N-drop_warmup)*nchains)` when collapsed; extra trailing `:chain` dim if `collapse=false`.
+- V8. `n_draws` requested beyond available post-warmup draws → `ErrorException`.
+- V9. Returned param labels: `[:α, :<X_names...>, aux...]`; `:α` always present for models with intercept.
+- V10. Standardised→original param recovery in `_generated_quantities`: `β_orig = (y_std/X_stds).*β` (Gaussian family) or `β./X_stds` (count/binary); `α` likewise via `dot(X_means, β_orig)`. **Will move out of generated model under T3.**
+- V11. `summary` auto `drop_warmup`: 0 if `N<400` else 200.
+- V12. `rhat>1.05` / `ess<100` / `mcse>5%std` → `@warn`; softer thresholds → `@info`.
+- V13. Bernoulli param recovery vs GLM looser tolerance: coef atol 0.05, epred atol 0.05.
+- V14. Weighted fit with `weights ≡ 1` == unweighted fit (params equal within tolerance). Currently ZERO tests exercising `_weighted_likelihood` (model.jl) — add under T1.
+- V15. `predict(TR, new_data::DataFrame)` uses raw new X, original-scale stored β (no re-standardisation of new X). `epred` on new data ≈ `GLM.predict` on same new data. Guards against re-introducing standardisation in the predict path.
+- V16. `extract_random_effect` predictor slicing conditions on `has_intercept(term.lhs)` — `(0+x...|g)` (no-intercept ranef terms) sliced differently from intercept-bearing ranef terms. Fixed 2026-07-15, guarded by dedicated tests.
 
 ## §T TASKS
 
-id|st|task|cites
-T1a1|x|: finish mixed model on `random_effects` git branch - done, details in git.
-T1a2|x|OUTPUT SHAPE - turingregression output changed to DimStack, parameter methods redone as `draws`/`outcome`/`predictors` (src/parametermethods.jl). Old `parameters`/`fixef`/`internals`/`coef`/`get_parameters`/`parameter_names` removed. predict.jl NOT yet migrated (T1b) — still calls removed `get_parameters`, currently broken.|C3,I.param
-T1b|x|predict.jl ranef support, newly built. Files: src/predict.jl.|T1,I.pred,V4
-T1c|x|grouping-var collision guard added: `extract_model_data` (formula_handlers.jl, else-branch) now `@warn`s naming colliding grouping var(s) when `length(unique(vars)) < length(vars)` over `Z`. Verified live: `(x1|g)+(x2|g)` fires warning, then hits real downstream collision (`β_z_g` duplicate field in generated model) confirming the guard flags a genuine break. Warning only — real fix (per-term layer namespacing) still deferred|T1
-T2|x|DROP `pretty` — unexported (TuringRegressions.jl:46). Test (runtests:282) switched `sprint(pretty,model)`→`sprint(summary,model; show_metrics=true)`; also fixed stale `fixef(model,...)` call in same test → `draws(mean,model,:fixef;...)`. No alias; `summary` does it|B1,I.display
-T3|x|fix `posterior_pred` NegBin: reads param `:ϕ⁻`, but `_generated_quantities` returns `:ϕ`|B2,I.pred
-T4|x|fix `show` NegBin branch: `T == NegativeBinomial2` never true (T is NegativeBinomial) — turingregression.jl:182 now `T == NegativeBinomial`. Test deferred, tracked under T6|B3,I.display
-T5|x|Canonical NegBin = LOCAL `NegativeBinomial2` (utils.jl:46). Fix predict.jl:128 to use local not `TuringGLM.NegativeBinomial2`. Then REMOVE TuringGLM from Project.toml — it's the only use (P1); heavy dep gone|C11,B2
-T6|.|TESTS (merged T6+T7+T16): (a) repair commented-out testsets (Model Creation, Model Fit) — ref stale fields (`unstd_params`, `standardized`, `Z_names`) not on struct; (b) fix test var-name mismatches `mod`/`model_count`/`mod_empty` vs defined `model`/`mod_count`/`model_empty`; (c) write plot tests — runtests warns "No tests yet implemented for plots", add headless CairoMakie target|V2,I.plots
-T8|x|resolved by T1a2: fn is now `predictors(TR, type)`, `fixed_effects` name dropped entirely. Readme/docstring now consistent — verify readme text updated too.|I.param
-T9|.|README (merged T9+T11): (a) API lists `linpred`/`epred`/`posterior_pred` as public, not exported — export or relabel internal; (b) usage block corrupted (compressed `[271 items...]`, typos `TuringGLModels`, `fucntion`) — rewrite|I.pred,I
-T10|.|`_weighted_likelihood` exists but no test + no exposed `weights` path in readme; verify weighted fit works|C12
-T12|x|VOID: target `data_response` wrapper (formula_handlers.jl:4-6 per old spec) does not exist in current src — no such fn anywhere, no `response()` call site either. Already gone or spec ref was stale. Nothing to inline.|
-T13|x|P6: collapse two `loo_compare` bodies → vararg forwards to vector: `loo_compare(m::TuringRegression...; kw...) = loo_compare(collect(m); kw...)` (comparison.jl:27,43)|I.comp
-T14|x|P7: array-form `turing_glm` (turingregression.jl:137) now builds formula via programmatic `term(:y) ~ sum(term.(X_names))` — no eval, no Meta.parse. Fixed stray `formula_obj`→`formula` typo at call site (line 138) while verifying. `term` in scope via package-level `using StatsModels`|I.model
-T15|x|P4: `const default_options` (summary.jl) — was untyped module global, now `const`|
-T17|.|BIG JOB: swap generated model `Expr` → strings-with-comments so `show_code`/printed model carries explanatory comments (Expr strips them). Rewrites model.jl code-gen (V3/V4 guard) — re-verify all families vs GLM after. FOLD IN P2: collapse `_likelihood`+`_weighted_likelihood` (90% dup) into one family dispatch, weights default `ones` → makes V14 true by construction. FOLD IN scaling redesign: move standardise/back-transform OUT of generated model — compute scaling stats ONCE outside (NamedTuple `X_means/X_stds/y_mean/y_std` + per-ranef), pass scaled data in, back-transform (fixef+ranef+Σ) in Julia in `fit!`, DELETE `_standardise_data`+`_generated_quantities`. Reworks the in-model ranef scaling T1 wrote. Round-trip test `unstandardise∘standardise==id`|C2,C6,C8,I,V3,V4,V14
-T18|.|BIG JOB: move Makie plots out of `Requires.@require`/`__init__` into native pkg extension (`ext/`, `[weakdeps]`, `[extensions]`) per new Julia usage. Also drop Colors dep (P3): only use is `colormap("Grays",125)` lineribbon.jl:45 — use Makie's `cgrad`/`to_colormap` in the ext instead|C7
-T19|.|BIG JOB: prior center+scale wiring (FLIPS C2). Today user must specify priors on the standardised (mean 0, sd 1) scale. Change so priors are given on the ORIGINAL data scale — e.g. `Normal(10,20)` on a coef whose predictor has mean 10, sd 20 → transformed to `Normal(0,1)` for the internal standardised fit — and reported back on original scale in `summary`/`show`/prior display. REUSE the centralised affine map from T17 — prior forward-transform is the INVERSE of the param back-transform; don't hand-write new per-family algebra. Transform via `Distributions.AffineDistribution` (`shift + scale*d`) — works for any univariate prior, no param rewriting; store user's original prior for display, fit with scaled. Guard: aux σ = scale-only (shift 0). Verify Turing/NUTS samples AffineDistribution + filldist cleanly. Update C2, V-invariants + tests|C2,I|NEW
-T20|.|BIG JOB: make `TuringRegression` implement the StatsAPI/StatsBase `RegressionModel` interface (coef, coefnames, nobs, dof, dof_residual, vcov, stderror, loglikelihood, deviance, residuals, fitted, predict, response, modelmatrix, formula, confint, ...) sensibly for a Bayesian fit — posterior-based analogues (point est = median, vcov = posterior cov, confint = credible interval), error/skip methods with no Bayesian meaning. Consider wrapping in `StatsModels.TableRegressionModel` so formula-schema machinery + `@formula` term handling come for free. New invariant + tests|I|NEW
+T1|.|Confirm full new test suite passes AND benchmarks fit well|V2,V14,I.plots
 
-NOTE|.|P8: `epred` picks invlink by function `==` on TR.link (predict.jl:92–100). Fragile but V1-bounded to 3 links. No action unless a 4th link appears|V1
+T2|.|README rewrite — API surface has drifted (old `fixef`/`parameters`/`get_parameters` references, TuringGLM mentions). Bring in line with current `draws`/`predict`/`summary` interface|I
 
+T3|.|BIG JOB: redo scaling w.r.t. model. Move standardise/back-transform OUT of the generated model — compute scaling stats ONCE outside (NamedTuple `X_means`/`X_stds`/`y_mean`/`y_std` + per-ranef equivalents), pass scaled data into the model, back-transform (fixef + ranef + Σ) in Julia inside `fit!`. Delete `_standardise_data`/`_generated_quantities` in favour of this. Reworks in-model ranef scaling. Add round-trip test `unstandardise∘standardise == id`|C2,C6,V10,V3,V4,V14
 
-## §B BUGS
+T4|.|BIG JOB: flip prior scaling (depends on T3's centralised affine map). Today user specifies priors on standardised (mean 0, sd 1) scale. Change so priors are given on ORIGINAL data scale — e.g. `Normal(10,20)` on a predictor with mean 10, sd 20 → transformed to `Normal(0,1)` internally for the standardised fit — reported back on original scale in `summary`/`show`/prior display. Use `Distributions.AffineDistribution` (`shift + scale*d`) for the forward transform (prior) and its inverse for the param back-transform — don't hand-write new per-family algebra. Store user's original prior for display; fit on scaled. Re-verify V-invariants under Turing/NUTS with `AffineDistribution` priors|C2,I
 
-id|date|cause|fix
-B1|2026-07-13|`pretty` exported (TuringRegressions.jl:44) + tested (runtests:282) but no definition|T2 (fixed 2026-07-15, unexported)
-B2|2026-07-13|`posterior_pred` NegBin gets `:ϕ⁻` (predict.jl:127); generated_quantities returns `:ϕ` (model.jl:197). Also calls `TuringGLM.NegativeBinomial2` not local. MethodError/KeyError on NegBin posterior predict|T3,T5
-B3|2026-07-13|`show` (turingregression.jl:184) tests `T == NegativeBinomial2` — wrong; family type is `NegativeBinomial`. NegBin aux prior line never prints|T4
-B4|2026-07-14|`extract_random_effect` (formula_handlers.jl:106) slices `modelcols(term.lhs,d)[:, 2:end]` unconditionally, assuming leading intercept col. Slope-only-no-intercept ranef terms e.g. `(0+x1+x2|g)` have NO intercept col there — slice wrongly drops first real predictor (x1) instead. Discovered verifying T1 Step 4 (model.jl generic, bug is upstream)|OK fixed 2026-07-15: `_ranef_predictors`/`_ranef_predictor_names` (formula_handlers.jl:64-71) slice conditional on `has_intercept` arg, verified V16
-B5|2026-07-14|`extract_model_data` (formula_handlers.jl:76) builds X via `MixedModels.modelmatrix(MixedModel(formula,data))` unconditionally — MixedModels.jl throws `ArgumentError "Formula contains no random effects"` for formulas with zero ranef terms. Blocks ALL non-ranef `turing_glm` calls, contradicting V3's claim `Vs. GLM` testset currently passes — needs re-verification. Confirmed pre-existing (unchanged since HEAD~1), not introduced this session|OK fixed 2026-07-15: zero-ranef branch (formula_handlers.jl:50-53) uses plain `modelcols(f.rhs,d)` — `MixedModels.modelmatrix` only called when `re_terms` nonempty, verified V17
+T5|.|Re-verify model code-gen (`show_code`, model.jl generated `Expr`) after T3/T4 land, since both touch generated-model internals. FOLD IN: collapse `_likelihood` + `_weighted_likelihood` (currently ~90% duplicated) into one family-dispatched function, with `weights` defaulting to `ones(...)` so unweighted fit is just weighted-fit-with-1s (makes V14 a true structural guarantee, not a coincidence)|C6,V14
+
+T6|.|BIG JOB: `TuringRegression` as StatsAPI/StatsBase `RegressionModel`. Posterior-based methods where a point-estimate API expects one; skip/error clearly where no sane mapping exists (e.g. `StatsModels.TableRegressionModel`-only methods). Add formula-schema tests|I
+
+## §NOTE
+
+- P8: `TR.link` field (predict.jl) — used internally, V1-bounded to the 5 families, not user-facing.

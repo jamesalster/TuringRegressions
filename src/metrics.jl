@@ -48,10 +48,9 @@ function calculate_metrics(
 
         # handle metrics requiring a numeric outcome
         numeric_metric_table = zeros(0, size(preds)[2:end]...)
-        if AreaUnderCurve ∈ metrics
+        if auc ∈ metrics
             numeric_metric_table = cat(numeric_metric_table, _get_auc(preds, y); dims = 1)
         end
-        println(numeric_metric_table)
         if pseudo_r2 ∈ metrics
             numeric_metric_table = cat(numeric_metric_table, _calculate_metric(pseudo_r2, preds, y); dims = 1)
         end
@@ -82,7 +81,7 @@ function calculate_metrics(
     metric_names = replace.(
         string.(metrics2), r"\(.*\)" => "", "LPLoss(p = 1)" => "MeanAbsoluteError"
     )
-    metric_names = AreaUnderCurve ∈ metrics ? vcat(metric_names, "AreaUnderCurve") : metric_names
+    metric_names = auc ∈ metrics ? vcat(metric_names, "AreaUnderCurve") : metric_names
     metric_names = pseudo_r2 ∈ metrics ? vcat(metric_names, "Pseudo r2") : metric_names
 
     if ndims(metric_table) == 2

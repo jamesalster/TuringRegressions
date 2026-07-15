@@ -73,8 +73,10 @@ function turing_glm(formula::FormulaTerm,
         error("Family: $(string(family)) not supported.")
     end
 
-    # Get data arrays
-    y, X, Z = extract_model_data(formula, data)
+    # Get data arrays. `schema_formula` is `formula` with schema/contrasts baked in —
+    # stored on TR and reused by predict(TR, new_data::DataFrame) so grouping levels /
+    # categorical contrasts are never re-derived from (possibly small/partial) new data.
+    y, X, Z, formula_with_schema = extract_model_data(formula, data)
 
     # Make model info
     model_info = ModelInfo(
@@ -87,7 +89,7 @@ function turing_glm(formula::FormulaTerm,
     model_obj, model_code = construct_model(family, model_info, Z, priors, show_code)
 
     return TuringRegression{family}(
-        formula,
+        formula_with_schema,
         model_obj,
         priors,
         get_link(family),

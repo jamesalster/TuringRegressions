@@ -70,9 +70,9 @@ function _ranef_predictors(term_lhs, d, has_intercept::Bool)
     cols = modelcols(term_lhs, d)
     return has_intercept ? cols[:, 2:end] : cols
 end
-function _ranef_predictor_names(term_lhs, has_intercept::Bool)
-    names = [string(t) for t in term_lhs.terms]
-    return has_intercept ? names[2:end] : names
+function _ranef_predictor_names(term_lhs)
+    predictor_terms = filter(t -> !(t isa ConstantTerm || t isa InterceptTerm), term_lhs.terms)
+    return [string(t) for t in predictor_terms]
 end
 
 # Get random effect datastructure from formula
@@ -95,7 +95,7 @@ function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
 
     # Get predictor matrix from LHS using modelcols
     predictors = _ranef_predictors(term.lhs, d, has_intercept)
-    predictor_names = _ranef_predictor_names(term.lhs, has_intercept)
+    predictor_names = _ranef_predictor_names(term.lhs)
 
     has_fixed_effects = size(predictors, 2) > 0
 

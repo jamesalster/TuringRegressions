@@ -342,7 +342,7 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
 end
 
 #### Main function to assemble the model code
-function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, model_ranef::Vector{RandomEffect}, prior::RegressionPrior)
+function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, model_ranef::Union{Vector{RandomEffect}, Nothing}, prior::RegressionPrior)
 
     # Empty quote
     body = Expr(:block) 
@@ -393,8 +393,13 @@ function construct_model(family::Type{<:Distribution}, model_info::ModelInfo, mo
     model_info.weighted && push!(args, :weights)
     
     # build model code
+    # Unique name per generated model: DynamicPPL dispatches model evaluation on
+    # typeof(f), so reusing "turing_regression" for every model let Turing's
+    # internal AD/dual-number caches (keyed on that shared type) leak between
+    # models with different parameter counts, causing BoundsErrors during sampling.
+    fname = gensym(:turing_regression)
     model_code = quote
-        @model function turing_regression($(args...))
+        @model function $(fname)($(args...))
             nobs, npredictors = size(X)
             $body
         end

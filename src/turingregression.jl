@@ -293,7 +293,7 @@ function fit!(
     layers = Dict{Symbol,Any}(:fixef => fixef_arr)
 
     # One layer per random-effect grouping term
-    for re in TR.z
+    for re in (TR.modelinfo.has_random_effects ? TR.z : RandomEffect[])
         group = re.variable
         intercept_sym = Symbol("α_z_", group)
         beta_sym = Symbol("β_z_", group)

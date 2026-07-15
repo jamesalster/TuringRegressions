@@ -52,6 +52,7 @@ end
 
 function get_fixef_names(formula, data)
     coefs = coefnames(ModelFrame(formula, data))
+    filter!(x -> !occursin(" | ", x), coefs) # Drop random effects TODO do this properly
     if has_intercept(formula)
         return coefs[2:end]
     else

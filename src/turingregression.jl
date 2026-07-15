@@ -37,7 +37,7 @@ mutable struct TuringRegression{T<:Distribution}
     modelinfo::ModelInfo
     modelcode::Expr
     samples::Union{Nothing,Chains}
-    parameters::Union{Nothing,DimArray}
+    parameters::Union{Nothing,DimStack}
 end
 
 """
@@ -271,56 +271,71 @@ function fit!(
     param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
                     for p in param_names)
 
-    arrays = []
-    labels = Symbol[]
+    draw_dim = Dim{:draw}(axes(gq, 1))
+    chain_dim = Dim{:chain}(axes(gq, 2))
 
-    # Fixed effects (non-random)
+    # :fixef layer — α, β, aux params (unchanged content/shape from before T1)
+    fixef_arrays = []
+    fixef_labels = Symbol[]
     for param in filter(p -> !occursin("_z_", string(p)), param_names)
         if param === :β
             arr = stack(param_dict[param])
-            push!(arrays, arr)
-            append!(labels, [Symbol("β[$i]") for i in 1:size(arr, 1)])
+            push!(fixef_arrays, arr)
+            append!(fixef_labels, Symbol.(TR.X_names))
         else
-            push!(arrays, reshape(param_dict[param], 1, size(param_dict[param])...))
-            push!(labels, param)
+            push!(fixef_arrays, reshape(param_dict[param], 1, size(param_dict[param])...))
+            push!(fixef_labels, param)
         end
     end
+    fixef_arr = DimArray(vcat(fixef_arrays...), (Dim{:param}(fixef_labels), draw_dim, chain_dim))
 
-    # Random effects
+    layers = Dict{Symbol,Any}(:fixef => fixef_arr)
+
+    # One layer per random-effect grouping term
     for re in TR.z
         group = re.variable
-        
-        # Intercepts
-        if re.has_intercept
-            push!(arrays, stack(param_dict[Symbol("α_z_", group)]))
-            append!(labels, [Symbol("$(group)[Intercept,$(lev)]") for lev in re.levels])
+        intercept_sym = Symbol("α_z_", group)
+        beta_sym = Symbol("β_z_", group)
+        sd_sym = Symbol("σ_z_", group)
+        R_sym = Symbol("R_z_", group)
+        offset_sym = Symbol("offset_z_", group)
+
+        effect_names = Symbol[]
+        re.has_intercept && push!(effect_names, :Intercept)
+        re.has_fixed_effects && append!(effect_names, Symbol.(re.predictor_names))
+
+        # Main layer: (effect, group, draw, chain)
+        if re.has_intercept & re.has_fixed_effects
+            combined = [vcat(reshape(param_dict[intercept_sym][i, j], 1, :), param_dict[beta_sym][i, j])
+                        for i in axes(gq, 1), j in axes(gq, 2)]
+            main_arr = stack(combined)
+        elseif re.has_fixed_effects
+            main_arr = stack(param_dict[beta_sym])
+        else # re.has_intercept only
+            combined = [reshape(param_dict[intercept_sym][i, j], 1, :) for i in axes(gq, 1), j in axes(gq, 2)]
+            main_arr = stack(combined)
         end
-        
-        ## Slopes
-        if re.has_fixed_effects
-            arr = stack(param_dict[Symbol("β_z_", group)])
-            push!(arrays, dropdims(arr; dims=1))
-            for pred in re.predictor_names, lev in re.levels
-                push!(labels, Symbol("$(group)[$(pred),$(lev)]"))
-            end
+        layers[group] = DimArray(main_arr, (Dim{:effect}(effect_names), Dim{:group}(re.levels), draw_dim, chain_dim))
+
+        # :<group>_sd layer — back-transformed group-level SDs, one per effect
+        sd_arr = stack(param_dict[sd_sym])
+        layers[Symbol(group, "_sd")] = DimArray(sd_arr, (Dim{:effect}(effect_names), draw_dim, chain_dim))
+
+        # :<group>_corr layer — only when correlated (full L*L' per draw)
+        if R_sym ∈ param_names
+            corr_arr = stack(param_dict[R_sym])
+            layers[Symbol(group, "_corr")] = DimArray(
+                corr_arr, (Dim{:effect}(effect_names), Dim{:effect2}(effect_names), draw_dim, chain_dim)
+            )
         end
-        
-        # Correlations
-        R_param = Symbol("R_z_", group)
-        if R_param ∈ param_names
-            effect_names = Symbol[]
-            re.has_intercept && push!(effect_names, :Intercept)
-            re.has_fixed_effects && append!(effect_names, Symbol.(re.predictor_names))
-            
-            R_samples = param_dict[R_param]
-            for i in 1:length(effect_names), j in (i+1):length(effect_names)
-                corr_vals = [R_samples[d, c][i, j] for d in axes(R_samples, 1), c in axes(R_samples, 2)]
-                push!(arrays, reshape(corr_vals, 1, size(corr_vals)...))
-                push!(labels, Symbol("R_$(group)[$(effect_names[i]),$(effect_names[j])]"))
-            end
+
+        # :<group>_offset layer — only for slope-only-no-intercept terms, hidden from user-facing accessors
+        if offset_sym ∈ param_names
+            offset_arr = stack(param_dict[offset_sym])
+            layers[Symbol(group, "_offset")] = DimArray(offset_arr, (Dim{:group}(re.levels), draw_dim, chain_dim))
         end
     end
 
-    TR.parameters = DimArray(vcat(arrays...), (Dim{:param}(labels), Dim{:draw}, Dim{:chain}))
+    TR.parameters = DimStack(NamedTuple(layers))
     return TR
 end

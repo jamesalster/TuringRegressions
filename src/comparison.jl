@@ -16,12 +16,13 @@ end
 
 """
     loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)
+    loo_compare(models::TuringRegression...; kwargs...)
 
 Compare multiple models using leave-one-out cross-validation.
     Passing `model_names` as a tuple will name the outputs.
 
 # Arguments
-- `models`: Vector of fitted TuringRegression objects
+- `models`: Vector of fitted TuringRegression objects (or passed as separate arguments)
 - `kwargs...`: Additional arguments passed to ParetoSmooth.loo_compare
 """
 function ParetoSmooth.loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)
@@ -29,20 +30,4 @@ function ParetoSmooth.loo_compare(models::AbstractVector{<:TuringRegression}; kw
     psis_objects = psis_loo.(models)
     return loo_compare(psis_objects; kwargs...)
 end
-
-"""
-    loo_compare(models::TuringRegression...; kwargs...)
-
-Compare multiple models using leave-one-out cross-validation.
-    Passing `model_names` as a tuple will name the outputs.
-
-# Arguments
-- `models...`: Multiple TuringRegression objects passed as separate arguments
-- `kwargs...`: Additional arguments passed to ParetoSmooth.loo_compare
-"""
-function ParetoSmooth.loo_compare(models::TuringRegression...; kwargs...)
-    @nospecialize models
-    @views models = [models[i] for i in 1:length(models)]
-    cv_results = psis_loo.(models)
-    return loo_compare(cv_results; kwargs...)
-end
+ParetoSmooth.loo_compare(models::TuringRegression...; kwargs...) = loo_compare(collect(models); kwargs...)

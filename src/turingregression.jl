@@ -134,9 +134,8 @@ function turing_glm(
         X_names = ntuple(i -> Symbol(names[i]), length(names))
     end
     table = (; NamedTuple{X_names}(eachcol(X))..., NamedTuple{(:y,)}([y])...)
-    formula = "y ~ " * join([string.(term) for term in X_names], " + ")
-    formula_obj = eval(Meta.parse("@formula($formula)"))
-    return turing_glm(formula_obj, table, T; kwargs...)
+    formula = term(:y) ~ sum(term.(X_names))
+    return turing_glm(formula, table, T; kwargs...)
 end
 
 """
@@ -180,7 +179,7 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
     elseif T == Normal
         print(io, normal_style, "  Auxiliary (σ): ")
         println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
-    elseif T == NegativeBinomial2
+    elseif T == NegativeBinomial
         print(io, normal_style, "  Auxiliary (1/ϕ): ")
         println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
     end

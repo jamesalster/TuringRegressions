@@ -86,7 +86,7 @@ function turing_glm(formula::FormulaTerm,
         !isnothing(weights)
     )
 
-    model_obj, model_code = construct_model(family, model_info, Z, priors, show_code)
+    model_obj, model_code = cached_construct_model(family, model_info, Z, priors, show_code)
 
     return TuringRegression{family}(
         formula_with_schema,

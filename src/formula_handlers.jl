@@ -72,20 +72,30 @@ function extract_model_data(formula, data, weights=nothing)
     return ModelData(f, y, predictors, Z, weights)
 end
 
+# Grouping-variable values for a random-effects term's RHS, read straight off the raw
+# data — handles a single grouping variable (`(1|g)`) and an interaction of several
+# (`(1|item:subject)`). Deliberately NOT MixedModels._ranef_refs: that function looks
+# values up in the term's fitted contrasts dict and KeyErrors on any level unseen at
+# fit time — which breaks posterior_predict on new data with a new grouping level
+# before `_remap_levels`'s allow_new_levels handling ever gets a chance to run.
+_ranef_group_values(rhs::CategoricalTerm, d::NamedTuple) = string.(d[rhs.sym])
+function _ranef_group_values(rhs::InteractionTerm, d::NamedTuple)
+    columns = [string.(d[t.sym]) for t in rhs.terms]
+    return [join(row, ":") for row in zip(columns...)]
+end
+
 # Get random effect datastructure from formula
 function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
-    # Use their _ranef_refs function to get grouping info
-    refs, levels = _ranef_refs(term.rhs, d)
-
-    # Convert refs to Vector{Int}
-    level_index = Vector{Int}(refs)
-
     # Get variable name - handle simple and interaction terms
     variable = if term.rhs isa CategoricalTerm
         term.rhs.sym
     else  # InteractionTerm like (item:subject)
         Symbol(join([t.sym for t in term.rhs.terms], ":"))
     end
+
+    group_values = _ranef_group_values(term.rhs, d)
+    levels = sort(unique(group_values))
+    level_index = [findfirst(==(v), levels) for v in group_values]
 
     predictors = extract_predictors(term.lhs, d)
 

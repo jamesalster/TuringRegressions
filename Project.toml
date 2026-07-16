@@ -15,6 +15,8 @@ MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
 MCMCDiagnosticTools = "be115224-59cd-429b-ad48-344e309966f0"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 MixedModels = "ff71e718-51f3-5ec2-a782-8ffcbfa3c316"
+PSIS = "ce719bf2-d5d0-4fb9-925d-10a81b42ad04"
+PosteriorStats = "7f36be82-ad55-44ba-a5c0-b8b5480d7aa5"
 PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
@@ -33,10 +35,12 @@ Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 TuringRegressionsMakieExt = "Makie"
 
 [compat]
-Turing = "0.46"
 DynamicPPL = "0.42"
 FlexiChains = "0.6"
 MCMCChains = "7"
+PSIS = "0.9.10"
+PosteriorStats = "0.4.11"
+Turing = "0.46"
 
 [extras]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"

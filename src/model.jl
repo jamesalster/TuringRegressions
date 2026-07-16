@@ -229,8 +229,38 @@ function _standardise_data(family::Type, has_fixed_effects::Bool, has_random_eff
     return body
 end
 
+# per-observation log-likelihood, computed post-hoc since the likelihood itself is
+# added via Turing.@addlogprob! (no y[n] ~ Dist statement for DynamicPPL to track)
+function _pointwise_loglik(family::Type{<:Distribution}, weighted::Bool)
+    if !weighted
+        if family == Normal
+            :(loglik = logpdf.(Normal.(μ, σ), y_scaled))
+        elseif family == TDist
+            :(loglik = logpdf.(μ .+ σ .* TDist.(ν), y_scaled))
+        elseif family == Bernoulli
+            :(loglik = [logpdf(BernoulliLogit(μ[n]), y[n]) for n in 1:nobs])
+        elseif family == Poisson
+            :(loglik = [logpdf(LogPoisson(μ[n]), y[n]) for n in 1:nobs])
+        elseif family == NegativeBinomial
+            :(loglik = [logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) for n in 1:nobs])
+        end
+    else
+        if family == Normal
+            :(loglik = [weights[n] * logpdf(Normal(μ[n], σ), y_scaled[n]) for n in 1:nobs])
+        elseif family == TDist
+            :(loglik = [weights[n] * logpdf(μ[n] + σ * TDist(ν), y_scaled[n]) for n in 1:nobs])
+        elseif family == Bernoulli
+            :(loglik = [weights[n] * logpdf(BernoulliLogit(μ[n]), y[n]) for n in 1:nobs])
+        elseif family == Poisson
+            :(loglik = [weights[n] * logpdf(LogPoisson(μ[n]), y[n]) for n in 1:nobs])
+        elseif family == NegativeBinomial
+            :(loglik = [weights[n] * logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) for n in 1:nobs])
+        end
+    end
+end
+
 # parameter scaling
-function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::Bool, has_intercept::Bool, has_random_effects::Bool, model_ranef::Union{Vector{RandomEffect}, Nothing})
+function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::Bool, has_intercept::Bool, has_random_effects::Bool, model_ranef::Union{Vector{RandomEffect}, Nothing}, weighted::Bool)
     # Empty quote
     body = Expr(:block) 
     return_list = Expr[]
@@ -333,6 +363,9 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
         end
     end
 
+    push!(body.args, _pointwise_loglik(family, weighted))
+    push!(return_list, :(loglik=loglik))
+
     # add return line to body as a named tuple
     return_tuple = Expr(:tuple, return_list...)
     return_stmt = Expr(:return, return_tuple)
@@ -376,7 +409,7 @@ function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, m
     end
 
     # Generated Quantitites
-    push!(body.args, _generated_quantities(family, model_info.has_fixed_effects, model_info.has_intercept, model_info.has_random_effects, model_ranef))
+    push!(body.args, _generated_quantities(family, model_info.has_fixed_effects, model_info.has_intercept, model_info.has_random_effects, model_ranef, model_info.weighted))
 
     return body
 end

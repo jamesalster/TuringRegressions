@@ -53,9 +53,9 @@ Metrics (StatisticalMeasures.jl):
 - `default_metrics(TR, fun=nothing)` regression → `[rsq, rmse, mae]`; Bernoulli → `[accuracy, kappa, TPR, TNR, auc, pseudo_r2]`.
 - `pseudo_r2(preds, y)` McFadden, exported.
 
-Comparison (ParetoSmooth.jl, `src/comparison.jl`):
-- `psis_loo(TR)` → PsisLoo.
-- `loo_compare(models::TuringRegression...)` / `loo_compare(models::AbstractVector{<:TuringRegression})`, kwargs forwarded.
+Comparison (PSIS.jl + PosteriorStats.jl, `src/comparison.jl`, T7):
+- `psis_loo(TR; kwargs...)` → `PosteriorStats.PSISLOOResult`, kwargs forwarded to `PosteriorStats.loo`.
+- `loo_compare(models::TuringRegression...; kwargs...)` / `loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)` → `PosteriorStats.ModelComparisonResult`, kwargs forwarded to `PosteriorStats.compare`.
 
 Display (`src/summary.jl`, `src/turingregression.jl`):
 - `Base.show(io, TR; warnings=true)` family/formula/prior/obs/samples + warnings.
@@ -89,10 +89,12 @@ Types:
 - V15. `predict(TR, new_data::DataFrame)` uses raw new X, original-scale stored β (no re-standardisation of new X). `epred` on new data ≈ `GLM.predict` on same new data. Guards against re-introducing standardisation in the predict path.
 - V16. `extract_random_effect` predictor slicing conditions on `has_intercept(term.lhs)` — `(0+x...|g)` (no-intercept ranef terms) sliced differently from intercept-bearing ranef terms. Fixed 2026-07-15, guarded by dedicated tests.
 - V17. Test suite runs via `Pkg.test()`, not direct `julia --project=. test/runtests.jl` — `Pkg.test()`'s isolated temp env is the only one that both (a) resolves deps fresh from `[extras]`/`[compat]` and (b) exercises the package's real symbol table end-to-end. Requires `[compat]` pinned on every Turing-stack package whose version drift can silently break internals (`Turing`, `DynamicPPL`, `FlexiChains`, `MCMCChains` — currently 0.46/0.42/0.6/7), so the temp env's independent resolve can't drift to an incompatible combo.
+- V19. `_generated_quantities` (`src/model.jl`) return tuple always includes a `:loglik` key — per-observation log-likelihood vector, added under T7 for `psis_loo`/`loo_compare`. Computed post-hoc inside `_generated_quantities` rather than via DynamicPPL's normal VarName-based pointwise-loglik tracking, because `model.jl`'s likelihood is written with `Turing.@addlogprob!` (not `y[n] ~ Dist(...)`) — no observed VarNames exist for DynamicPPL to see. Any code calling `generated_quantities(model_with_data, TR.samples)` directly must filter/exclude `:loglik` before treating the returned keys as fitted parameter names — `src/turingregression.jl`'s fixef-layer param loop does this via `filter(!=(:loglik), ...)`.
 
 ## §B BUGS
 
 id|date|cause|fix
+B3|2026-07-16|T7 (`comparison.jl` swap off ParetoSmooth) assumed `loglikelihood(TR.model, TR.samples)`/DynamicPPL VarName-based pointwise loglik would expose per-observation log-likelihood. It can't: `model.jl`'s likelihood is added via `Turing.@addlogprob!`, never a `y[n] ~ Dist(...)` statement, so DynamicPPL sees zero observed VarNames. The old ParetoSmooth-era `psis_loo`/`loo_compare` were never actually functional — not just built on an outdated/removed dependency.|V19 — loglik now computed explicitly inside `_generated_quantities` and consumed via `generated_quantities(model_with_data, TR.samples)` in `psis_loo`
 
 ## §T TASKS
 
@@ -108,7 +110,7 @@ T5|.|Re-verify model code-gen (`show_code`, model.jl generated `Expr`) after T3/
 
 T6|.|BIG JOB: `TuringRegression` as StatsAPI/StatsBase `RegressionModel`. Posterior-based methods where a point-estimate API expects one; skip/error clearly where no sane mapping exists (e.g. `StatsModels.TableRegressionModel`-only methods). Add formula-schema tests|I
 
-T7|.|Swap `src/comparison.jl` off ParetoSmooth (broken, already stripped from Project.toml) onto PSIS.jl + PosteriorStats.jl. `psis_loo` → PSIS.jl `psis` on reshaped loglik array; `loo_compare` → PosteriorStats.jl `compare`/`loo` API. Re-check return-type shape/fields callers rely on (`elpd`, etc), update tests|C7
+T7|x|Swap `src/comparison.jl` off ParetoSmooth (broken, already stripped from Project.toml) onto PSIS.jl + PosteriorStats.jl. `psis_loo` → PSIS.jl `psis` on reshaped loglik array; `loo_compare` → PosteriorStats.jl `compare`/`loo` API. Re-check return-type shape/fields callers rely on (`elpd`, etc), update tests|C7
 
 T8|.|Investigate: drop MCMCChains for FlexiChains in param extraction/`summary`. Currently `fit!` forces `chain_type=MCMCChains.Chains` (Turing 0.46 default is `FlexiChains.FlexiChain`) purely to keep every `.samples` access site (`name_map`, indexing) working w/o rewrite. Check whether native FlexiChains gives cleaner/faster param extraction (parametermethods.jl `draws`) + `summary`/`show` — its `._data`/`._metadata`/`._structures` layout may map onto `DimStack` output more directly than MCMCChains' AxisArray does. Scope: survey FlexiChains API, prototype one extraction path, compare against current before committing to a rewrite|C1,I
 
@@ -116,7 +118,7 @@ T9|.|Investigate: full-budget NUTS on sleepstudy RE model (`Reaction ~ 1 + Days 
 
 T10|x|`calculate_metrics(TR, metrics::Vector, fun=nothing; kwargs...)` (src/metrics.jl:35) puts the optional collapse function last — inconsistent w/ rest of package: `draws(f::Function, TR, type::Symbol)` (src/parametermethods.jl:57) puts function first, matching Julia idiom (`map(f, itr)`/`mean(f, itr)`). Change `calculate_metrics` to take `fun` first, matching `draws`. Update `default_metrics` (src/metrics.jl:124, calls `calculate_metrics` internally) + all call sites/tests|I
 
-T11|.|T1 pass-2 aborted early: `correlated intercept + slope (1+Days\|Subject)` @testset (test/runtests.jl:143) has 2 test failures, and since it's a top-level (non-nested) `@testset` with failures, Julia's `Test.jl` throws on completion — killed everything after it in `runtests.jl` (Predict, Weighted fit, model_warnings, Show/summary, benchmark table never ran). Once T9 lands a fix (or a decision to skip/loosen that one testset), run the rest of the suite and confirm it's clean end to end — don't leave it unverified just because the file happened to abort partway|T1,T9
+T11|x|T1 pass-2 aborted early: `correlated intercept + slope (1+Days\|Subject)` @testset (test/runtests.jl:143) has 2 test failures, and since it's a top-level (non-nested) `@testset` with failures, Julia's `Test.jl` throws on completion — killed everything after it in `runtests.jl` (Predict, Weighted fit, model_warnings, Show/summary, benchmark table never ran). Once T9 lands a fix (or a decision to skip/loosen that one testset), run the rest of the suite and confirm it's clean end to end — don't leave it unverified just because the file happened to abort partway|T1,T9
 
 T12|.|`Weighted fit (T10, V14)` @testset (test/runtests.jl) currently skipped (T11 diagnostic): same-seed comparison of weighted (weights=ones) vs unweighted model drifts past atol=0.5 under quickfit's cheap N=300 — likely because `_weighted_likelihood`'s `@addlogprob!` code path vs `_likelihood`'s `~` consume RNG differently even with identical seed, not a math bug (weights=1 is mathematically identical to unweighted). Investigate: confirm no real bug in `_weighted_likelihood` (src/model.jl), then either loosen tolerance to match realistic MCMC noise at N=300, compare via overlapping credible intervals instead of point atol, or bump this test's N. Re-enable testset once resolved|V14
 

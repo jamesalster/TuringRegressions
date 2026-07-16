@@ -207,6 +207,38 @@ end
 #### Methods ####
 
 """
+    _build_model_with_data(TR::TuringRegression)
+
+Build the DynamicPPL model conditioned on TR's data (y, X, random-effect
+grouping structures, weights as applicable). Return the conditioned model.
+"""
+function _build_model_with_data(TR::TuringRegression)
+    # Prepare random effect data structures
+    if TR.modelinfo.has_random_effects
+        n_gr = zeros(Int, length(TR.z))
+        group_idx = zeros(Int, size(first(TR.z).predictors, 1), length(TR.z))
+        group_predictors = Vector{Matrix{Float64}}(undef, length(TR.z))
+
+        for (i, ranef) in enumerate(TR.z)
+            n_gr[i] = length(ranef.levels)
+            group_idx[:,i] = ranef.level_index
+            group_predictors[i] = ranef.predictors #this is an empty matrix if no fixed effects for the ranef
+        end
+    end
+
+    # Call model function
+    if TR.modelinfo.has_random_effects & TR.modelinfo.weighted
+        return TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors, TR.weights)
+    elseif TR.modelinfo.has_random_effects
+        return TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors)
+    elseif TR.modelinfo.weighted
+        return TR.model(TR.y, TR.X, TR.weights)
+    else
+        return TR.model(TR.y, TR.X)
+    end
+end
+
+"""
     fit!(TR::TuringRegression; sampler, parallel, N, nchains, quiet, kwargs...)
 
 Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passed to Turing's `sample()`.
@@ -232,29 +264,7 @@ function fit!(
     quiet=true,
     kwargs...,
 )
-    # Prepare random effect data structures
-    if TR.modelinfo.has_random_effects
-        n_gr = zeros(Int, length(TR.z))
-        group_idx = zeros(Int, size(first(TR.z).predictors, 1), length(TR.z))
-        group_predictors = Vector{Matrix{Float64}}(undef, length(TR.z))
-
-        for (i, ranef) in enumerate(TR.z)
-            n_gr[i] = length(ranef.levels)
-            group_idx[:,i] = ranef.level_index
-            group_predictors[i] = ranef.predictors #this is an empty matrix if no fixed effects for the ranef
-        end
-    end
-
-    # Call model function
-    if TR.modelinfo.has_random_effects & TR.modelinfo.weighted
-        model_with_data = TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors, TR.weights)
-    elseif TR.modelinfo.has_random_effects 
-        model_with_data = TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors)
-    elseif TR.modelinfo.weighted 
-        model_with_data = TR.model(TR.y, TR.X, TR.weights)
-    else
-        model_with_data = TR.model(TR.y, TR.X)
-    end
+    model_with_data = _build_model_with_data(TR)
 
     # Sample. chain_type forced to MCMCChains.Chains: newer Turing defaults to
     # FlexiChains.FlexiChain, whose internals (._data/._metadata/._structures) are
@@ -269,7 +279,7 @@ function fit!(
 
     # Recover standardised parameters from generated quantities, thanks to claude
     gq = generated_quantities(model_with_data, TR.samples)
-    param_names = collect(keys(first(gq)))
+    param_names = filter(!=(:loglik), collect(keys(first(gq))))
     param_names = :α ∈ param_names ? [:α; filter(!=(:α), param_names)] : param_names
 
     # Extract all parameters in one pass

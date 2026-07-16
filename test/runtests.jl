@@ -149,8 +149,27 @@ end
     @test_throws ArgumentError outcome_as_distribution(mod)
 end
 
-# Model Comparison testset disabled: ParetoSmooth removed pending a DynamicPPL-compatible
-# version (psis_loo/loo_compare in src/comparison.jl are commented out of the package too).
+@testset "Model Comparison" begin
+    Random.seed!(123)
+    mod_full = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod_full)
+    mod_small = turing_glm(@formula(MPG ~ Cyl), mtcars, Normal)
+    quickfit!(mod_small)
+
+    mod_unfit = turing_glm(@formula(MPG ~ Cyl), mtcars, Normal)
+    @test_throws ArgumentError psis_loo(mod_unfit)
+
+    loo_full = psis_loo(mod_full)
+    @test isfinite(loo_full.estimates.elpd)
+    @test loo_full.estimates.se_elpd > 0
+
+    mc_vec = loo_compare([mod_full, mod_small])
+    mc_vararg = loo_compare(mod_full, mod_small)
+    @test mc_vec.rank == mc_vararg.rank
+    @test mc_vec.elpd_diff == mc_vararg.elpd_diff
+    @test length(mc_vec.rank) == 2
+    @test minimum(mc_vec.elpd_diff) == 0.0 # best model has elpd_diff 0
+end
 
 @testset "Show/summary output" begin
     Random.seed!(123)

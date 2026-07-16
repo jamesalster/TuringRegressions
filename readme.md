@@ -133,7 +133,8 @@ pp_check_dens_overlay(mod)
 * `predict(model, new_data::DataFrame; kwargs...)` - Predict on new data, remaps random-effect levels
 
 ### Model Comparison
-* Currently unavailable — `psis_loo`/`loo_compare` disabled pending move off ParetoSmooth.jl (see TODO)
+* `psis_loo(model; kwargs...)` - Leave-one-out cross-validation via Pareto-smoothed importance sampling (`PosteriorStats.loo`). `kwargs...` forwarded to `PosteriorStats.loo`.
+* `loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)` / `loo_compare(models::TuringRegression...; kwargs...)` - Compare fitted models by ELPD (`PosteriorStats.compare`). `kwargs...` forwarded to `PosteriorStats.compare`.
 
 ### Utilities
 * `summary(model)` - Formatted summary with diagnostics (rhat, ess, mcse)
@@ -170,7 +171,6 @@ It also uses the power of [DimensionalData.jl](https://rafaqz.github.io/Dimensio
 ## TODO
 
 * Priors currently expressed on standardised scale — move to original data scale
-* Swap `psis_loo`/`loo_compare` off ParetoSmooth.jl onto PSIS.jl + PosteriorStats.jl
 * Investigate slow NUTS sampling for correlated random-effects models
 
 See `SPEC.md` for the full task list.

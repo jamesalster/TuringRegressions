@@ -16,7 +16,7 @@ function _fixed_effects(prior::Distribution)
 end
 
 # prior
-function _random_effects(prior::Distribution, prior_fixef::Distribution, model_ranef::Vector{RandomEffect})
+function _random_effects(prior::Distribution, model_ranef::Vector{RandomEffect})
     body = Expr(:block)
 
     # Loop over ranef
@@ -25,29 +25,30 @@ function _random_effects(prior::Distribution, prior_fixef::Distribution, model_r
 
         #Name parameters
         variance_ranef = Symbol("σ_z_",ranef_name)
-        intercept_ranef = Symbol("α_z_",ranef_name)
         ranef_matrix_raw = Symbol("r_z_",ranef_name)
         ranef_matrix = Symbol("ranef_z_",ranef_name)
         L_ranef = Symbol("L_z_",ranef_name)
 
+        # No free mean parameter here: the population-level α/β already model the
+        # mean effect. A free ranef mean would be additively confounded with β
+        # (only their sum is identified), producing a slow/degenerate NUTS ridge
+        # and biased marginals (T9). Ranef components are mean-zero by construction.
         #Build varying slopes prior
         if ranef.has_intercept & ranef.has_fixed_effects
             n_predictors = size(ranef.predictors, 2) + 1
             push!(body.args, quote
                 $variance_ranef ~ filldist($prior, $n_predictors)
-                $intercept_ranef ~ filldist($prior_fixef, $(n_predictors-1)) #ideally with 0 included?
                 $L_ranef ~ LKJCholesky($n_predictors, 2.0)
                 $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
-                # Transform: β_z + Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
-                $ranef_matrix = (vcat(0, $intercept_ranef) .+ diagm($variance_ranef) * $L_ranef.L * $ranef_matrix_raw)'
+                # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
+                $ranef_matrix = (diagm($variance_ranef) * $L_ranef.L * $ranef_matrix_raw)'
             end)
         elseif ranef.has_fixed_effects
             n_predictors = size(ranef.predictors, 2)
             push!(body.args, quote
                 $variance_ranef ~ filldist($prior, $n_predictors)
-                $intercept_ranef ~ filldist($prior_fixef, $n_predictors) #ideally with 0 included?
                 $ranef_matrix_raw ~ filldist(Normal(), $n_predictors, n_groups[$i])
-                $ranef_matrix = ($intercept_ranef .+ $variance_ranef .* $ranef_matrix_raw)'
+                $ranef_matrix = ($variance_ranef .* $ranef_matrix_raw)'
             end)
         elseif ranef.has_intercept
             n_predictors = 1
@@ -308,7 +309,6 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
             predictors_mn = Symbol("Xmn_z_", ranef_name)
             predictors_sd = Symbol("Xstd_z_", ranef_name)
             ranef_matrix = Symbol("ranef_z_", ranef_name)
-            intercept_ranef = Symbol("α_z_", ranef_name)
             variance_ranef = Symbol("σ_z_", ranef_name)
             beta_orig = Symbol("β_orig_z_", ranef_name)
             beta_out = Symbol("β_z_", ranef_name)
@@ -391,7 +391,7 @@ function build_model_body(family::Type{<:Distribution}, model_info::ModelInfo, m
         push!(body.args, _fixed_effects(prior.fixed_effects))
     end
     if model_info.has_random_effects
-        push!(body.args, _random_effects(prior.random_effects, prior.fixed_effects, model_ranef))
+        push!(body.args, _random_effects(prior.random_effects, model_ranef))
     end
 
     if family ∉ [Bernoulli, Poisson] #Bernoulli and Poisson have no auxiliary parameter

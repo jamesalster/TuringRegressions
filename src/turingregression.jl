@@ -17,6 +17,7 @@ mutable struct TuringRegression{T<:Distribution} <: RegressionModel
     prior::RegressionPrior
     link::Function
     modeldata::ModelData
+    tf::Transform
     modelcode::Expr
     samples::Union{Nothing,Chains}
     parameters::Union{Nothing,DimStack}
@@ -65,8 +66,9 @@ function turing_glm(formula::FormulaTerm,
     # stored on TR and reused by posterior_predict(TR, new_data::DataFrame) so grouping levels /
     # categorical contrasts are never re-derived from (possibly small/partial) new data.
     modeldata = extract_model_data(formula, data, weights)
+    _, tf = standardise(modeldata, family)
 
-    model_obj, model_code = cached_construct_model(family, modeldata, priors, show_code)
+    model_obj, model_code = cached_construct_model(family, modeldata, show_code)
 
     return TuringRegression{family}(
         modeldata.f,
@@ -74,6 +76,7 @@ function turing_glm(formula::FormulaTerm,
         priors,
         get_link(family),
         modeldata,
+        tf,
         model_code,
         nothing,
         nothing
@@ -202,13 +205,15 @@ fit!(model, N=1000, nchains=2)
 # from ModelData.Z once, then calls the model with its unpacked-argument signature.
 # Shared with psis_loo (comparison.jl), which needs the same conditioned model.
 function _build_model_with_data(TR::TuringRegression)
-    md = TR.modeldata
+    md = apply_transform(TR.tf, TR.modeldata)
     Z = md.Z
     n_groups = [length(re.levels) for re in Z]
     group_idx = isempty(Z) ? Matrix{Int}(undef, length(md.y), 0) : reduce(hcat, (re.level_index for re in Z))
     group_predictors = [re.predictors.X for re in Z]
     weights = something(md.weights, ones(length(md.y)))
-    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights)
+    pr = TR.prior
+    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights, TR.tf,
+        pr.intercept, pr.fixed_effects, pr.random_effects, pr.auxiliary)
 end
 
 function fit!(

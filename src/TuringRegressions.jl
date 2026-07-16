@@ -30,7 +30,7 @@ using MCMCChains: MCMCChains, summarize, Chains
 
 using MacroTools: prettify
 using Suppressor: @suppress
-using StatsBase: mean, std, cov, CoefTable
+import StatsBase: StatsBase, mean, std, cov, CoefTable, ZScoreTransform, fit, transform
 using DataFrames: DataFrame
 using Tables: columntable
 using LinearAlgebra: I, dot, Symmetric, diagm, diag
@@ -40,6 +40,7 @@ using MixedModels: _ranef_refs
 
 include("prior.jl")
 include("formula_handlers.jl")
+include("transform.jl")
 include("turingregression.jl")
 include("model.jl")
 include("model_cache.jl")

@@ -1,22 +1,22 @@
 
 #### Building blocks of the model
 
-# prior
-function _intercept(prior::Distribution)
+# prior arg: prior_intercept
+function _intercept()
     quote
-        α ~ $prior
+        α ~ prior_intercept
     end
 end
 
-# prior
-function _fixed_effects(prior::Distribution)
+# prior arg: prior_fixed_effects
+function _fixed_effects()
     quote
-        β ~ filldist($prior, npredictors)
+        β ~ filldist(prior_fixed_effects, npredictors)
     end
 end
 
-# prior
-function _random_effects(prior::Distribution, modeldata::ModelData)
+# prior arg: prior_random_effects (shared across all ranef groups)
+function _random_effects(modeldata::ModelData)
     model_ranef = modeldata.Z
     body = Expr(:block)
 
@@ -38,7 +38,7 @@ function _random_effects(prior::Distribution, modeldata::ModelData)
         if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2) + 1
             push!(body.args, quote
-                $variance_ranef ~ filldist($prior, $n_predictors)
+                $variance_ranef ~ filldist(prior_random_effects, $n_predictors)
                 $L_ranef ~ LKJCholesky($n_predictors, 2.0)
                 $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
                 # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
@@ -47,14 +47,14 @@ function _random_effects(prior::Distribution, modeldata::ModelData)
         elseif TuringRegressions.has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2)
             push!(body.args, quote
-                $variance_ranef ~ filldist($prior, $n_predictors)
+                $variance_ranef ~ filldist(prior_random_effects, $n_predictors)
                 $ranef_matrix_raw ~ filldist(Normal(), $n_predictors, n_groups[$i])
                 $ranef_matrix = ($variance_ranef .* $ranef_matrix_raw)'
             end)
         elseif ranef.predictors.has_intercept
             n_predictors = 1
             push!(body.args, quote
-                $variance_ranef ~ filldist($prior, $n_predictors)
+                $variance_ranef ~ filldist(prior_random_effects, $n_predictors)
                 $ranef_matrix_raw ~ filldist(Normal(), n_groups[$i])
                 $ranef_matrix = $ranef_matrix_raw .* $variance_ranef 
             end)
@@ -63,20 +63,20 @@ function _random_effects(prior::Distribution, modeldata::ModelData)
     return body
 end
 
-# prior
-function _auxiliary_parameter(prior::Distribution, family::Type{<:Distribution})
+# prior arg: prior_auxiliary
+function _auxiliary_parameter(family::Type{<:Distribution})
     if family == Normal
         quote
-            σ ~ $prior
+            σ ~ prior_auxiliary
         end
     elseif family == TDist
-        quote 
+        quote
             σ ~ Exponential(1)
-            ν ~ $prior
+            ν ~ prior_auxiliary
         end
     elseif family == NegativeBinomial
-        quote 
-            ϕ ~ $prior
+        quote
+            ϕ ~ prior_auxiliary
             ϕ_inv = 1 / ϕ
         end
     elseif family ∈ [Bernoulli, Poisson]
@@ -94,19 +94,19 @@ function _linear_model(modeldata::ModelData)
         push!(terms, :α)
     end
     if has_fixed_effects(modeldata.predictors)
-        push!(terms, :(X_scaled * β))
+        push!(terms, :(X * β))
     end
     if !isempty(model_ranef)
         for (i, ranef) in enumerate(model_ranef)
             ranef_name = string(ranef.variable)
             ranef_matrix = Symbol("ranef_z_", ranef_name)
-            predictors_scaled = Symbol("Xscaled_z_", ranef_name)
+            predictors = :(group_predictors[$i])
 
             if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
                 push!(terms, :($ranef_matrix[group_idx[:,$i], 1]))
-                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,$i], 2:end]; dims = 2)[:]))
+                push!(terms, :(sum($predictors .* $ranef_matrix[group_idx[:,$i], 2:end]; dims = 2)[:]))
             elseif TuringRegressions.has_fixed_effects(ranef.predictors)
-                push!(terms, :(sum($predictors_scaled .* $ranef_matrix[group_idx[:,$i], :]; dims = 2)[:]))
+                push!(terms, :(sum($predictors .* $ranef_matrix[group_idx[:,$i], :]; dims = 2)[:]))
             elseif ranef.predictors.has_intercept
                 push!(terms, :($ranef_matrix[group_idx[:,$i]]))
             end
@@ -128,11 +128,11 @@ end
 function _likelihood(family::Type{<:Distribution})
     if family == Normal
         quote
-            Turing.@addlogprob! logpdf(MvNormal(μ, σ), y_scaled)
+            Turing.@addlogprob! logpdf(MvNormal(μ, σ), y)
         end
     elseif family == TDist
         quote
-            Turing.@addlogprob! logpdf(arraydist((μ) .+ σ .* TDist.(ν)), y_scaled)
+            Turing.@addlogprob! logpdf(arraydist((μ) .+ σ .* TDist.(ν)), y)
         end
     elseif family == Bernoulli
         quote
@@ -160,13 +160,13 @@ function _weighted_likelihood(family::Type{<:Distribution})
     if family == Normal
         quote
             for n in 1:nobs
-                Turing.@addlogprob! weights[n] * logpdf(Normal(μ[n], σ), y_scaled[n])
+                Turing.@addlogprob! weights[n] * logpdf(Normal(μ[n], σ), y[n])
             end
         end
     elseif family == TDist
         quote
             for n in 1:nobs
-                Turing.@addlogprob! weights[n] * logpdf(μ[n] + σ * TDist(ν), y_scaled[n])
+                Turing.@addlogprob! weights[n] * logpdf(μ[n] + σ * TDist(ν), y[n])
             end
         end
     elseif family == Bernoulli
@@ -190,56 +190,14 @@ function _weighted_likelihood(family::Type{<:Distribution})
     end
 end
 
-# data standardisation
-function _standardise_data(family::Type, has_fixed_effects::Bool, has_random_effects::Bool, model_ranef::Union{Vector{RandomEffect}, Nothing})
-    # Empty quote
-    body = Expr(:block)
-
-    # Do X if there are fixed effects
-    if has_fixed_effects
-        push!(body.args, quote
-            X_means = mean(X, dims=1)[:]
-            X_stds = std(X, dims=1)[:]
-            X_scaled = (X .- X_means') ./ X_stds'
-        end)
-    end
-
-    if has_random_effects
-        for (i, ranef) in enumerate(model_ranef)
-            if TuringRegressions.has_fixed_effects(ranef.predictors)
-                ranef_name = string(ranef.variable)
-                predictors_mn = Symbol("Xmn_z_", ranef_name)
-                predictors_sd = Symbol("Xstd_z_", ranef_name)
-                predictors_scaled = Symbol("Xscaled_z_", ranef_name)
-                push!(body.args, quote
-                    $predictors_mn = mean(group_predictors[$i], dims=1)[:]
-                    $predictors_sd = std(group_predictors[$i], dims=1)[:]
-                    $predictors_scaled = (group_predictors[$i] .- $predictors_mn') ./ $predictors_sd'
-                end)
-            end
-        end
-    end
-
-    # Do y if model family requires it
-    if family ∈ [Normal, TDist]
-        push!(body.args, quote
-            y_mean = mean(y)
-            y_std = std(y)
-            y_scaled = (y .- y_mean) / y_std
-        end)
-    end
-
-    return body
-end
-
 # per-observation log-likelihood, computed post-hoc since the likelihood itself is
 # added via Turing.@addlogprob! (no y[n] ~ Dist statement for DynamicPPL to track)
 function _pointwise_loglik(family::Type{<:Distribution}, weighted::Bool)
     if weighted
         if family == Normal
-            :(loglik = [weights[n] * logpdf(Normal(μ[n], σ), y_scaled[n]) for n in 1:nobs])
+            :(loglik = [weights[n] * logpdf(Normal(μ[n], σ), y[n]) for n in 1:nobs])
         elseif family == TDist
-            :(loglik = [weights[n] * logpdf(μ[n] + σ * TDist(ν), y_scaled[n]) for n in 1:nobs])
+            :(loglik = [weights[n] * logpdf(μ[n] + σ * TDist(ν), y[n]) for n in 1:nobs])
         elseif family == Bernoulli
             :(loglik = [weights[n] * logpdf(BernoulliLogit(μ[n]), y[n]) for n in 1:nobs])
         elseif family == Poisson
@@ -249,9 +207,9 @@ function _pointwise_loglik(family::Type{<:Distribution}, weighted::Bool)
         end
     else
         if family == Normal
-            :(loglik = logpdf.(Normal.(μ, σ), y_scaled))
+            :(loglik = logpdf.(Normal.(μ, σ), y))
         elseif family == TDist
-            :(loglik = logpdf.(μ .+ σ .* TDist.(ν), y_scaled))
+            :(loglik = logpdf.(μ .+ σ .* TDist.(ν), y))
         elseif family == Bernoulli
             :(loglik = [logpdf(BernoulliLogit(μ[n]), y[n]) for n in 1:nobs])
         elseif family == Poisson
@@ -271,31 +229,31 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
     # Calculations and objects to return
     if has_intercept & has_fixed_effects
         if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
-            push!(body.args, :(β_original = β ./ X_stds))
-            push!(body.args, :(α_original = α - dot(X_means, β_original)))
+            push!(body.args, :(β_original = β ./ tf.fixef.scale))
+            push!(body.args, :(α_original = α - dot(tf.fixef.mean, β_original)))
         else
-            push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
-            push!(body.args, :(α_original = y_mean - dot(X_means, β_original) + y_std * α))
+            push!(body.args, :(β_original = (tf.y.scale[1] ./ tf.fixef.scale) .* β))
+            push!(body.args, :(α_original = tf.y.mean[1] - dot(tf.fixef.mean, β_original) + tf.y.scale[1] * α))
         end
         push!(return_list, :(α=α_original))
         push!(return_list, :(β=β_original))
     elseif has_fixed_effects
         if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
-            push!(body.args, :(β_original = β ./ X_stds))
+            push!(body.args, :(β_original = β ./ tf.fixef.scale))
         else
-            push!(body.args, :(β_original = (y_std ./ X_stds) .* β))
+            push!(body.args, :(β_original = (tf.y.scale[1] ./ tf.fixef.scale) .* β))
         end
         push!(return_list, :(β=β_original))
     elseif has_intercept
         if family ∈ [Bernoulli, Poisson, NegativeBinomial] # Not standardised
             push!(body.args, :(α_original = α))
         else
-            push!(body.args, :(α_original = y_mean + y_std * α))
+            push!(body.args, :(α_original = tf.y.mean[1] + tf.y.scale[1] * α))
         end
         push!(return_list, :(α=α_original))
     end
     if family ∈ [Normal, TDist]
-        push!(body.args, :(σ_original = y_std * σ))
+        push!(body.args, :(σ_original = tf.y.scale[1] * σ))
         push!(return_list, :(σ=σ_original))
     end
     if family == TDist
@@ -306,10 +264,10 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
     end
 
     if has_random_effects
-        for ranef in model_ranef
+        for (i, ranef) in enumerate(model_ranef)
             ranef_name = string(ranef.variable)
-            predictors_mn = Symbol("Xmn_z_", ranef_name)
-            predictors_sd = Symbol("Xstd_z_", ranef_name)
+            predictors_mn = :(tf.ranef[$i].mean)
+            predictors_sd = :(tf.ranef[$i].scale)
             ranef_matrix = Symbol("ranef_z_", ranef_name)
             variance_ranef = Symbol("σ_z_", ranef_name)
             beta_orig = Symbol("β_orig_z_", ranef_name)
@@ -328,9 +286,9 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
                     push!(body.args, :($intercept_orig = $ranef_matrix[:,1] .- [dot($predictors_mn, $beta_orig[:,g]) for g in axes($beta_orig,2)]))
                     push!(body.args, :($sd_orig = vcat($variance_ranef[1], $variance_ranef[2:end] ./ $predictors_sd)))
                 else
-                    push!(body.args, :($beta_orig = (y_std ./ $predictors_sd) .* $ranef_matrix[:, 2:end]'))
-                    push!(body.args, :($intercept_orig = y_std .* $ranef_matrix[:,1] .- [dot($predictors_mn, $beta_orig[:,g]) for g in axes($beta_orig,2)]))
-                    push!(body.args, :($sd_orig = vcat(y_std * $variance_ranef[1], (y_std ./ $predictors_sd) .* $variance_ranef[2:end])))
+                    push!(body.args, :($beta_orig = (tf.y.scale[1] ./ $predictors_sd) .* $ranef_matrix[:, 2:end]'))
+                    push!(body.args, :($intercept_orig = tf.y.scale[1] .* $ranef_matrix[:,1] .- [dot($predictors_mn, $beta_orig[:,g]) for g in axes($beta_orig,2)]))
+                    push!(body.args, :($sd_orig = vcat(tf.y.scale[1] * $variance_ranef[1], (tf.y.scale[1] ./ $predictors_sd) .* $variance_ranef[2:end])))
                 end
                 push!(body.args, :($R_out = $L_ranef.L * $L_ranef.L'))
                 push!(return_list, :($beta_out=$beta_orig))
@@ -342,8 +300,8 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
                     push!(body.args, :($beta_orig = $ranef_matrix' ./ $predictors_sd))
                     push!(body.args, :($sd_orig = $variance_ranef ./ $predictors_sd))
                 else
-                    push!(body.args, :($beta_orig = (y_std ./ $predictors_sd) .* $ranef_matrix'))
-                    push!(body.args, :($sd_orig = (y_std ./ $predictors_sd) .* $variance_ranef))
+                    push!(body.args, :($beta_orig = (tf.y.scale[1] ./ $predictors_sd) .* $ranef_matrix'))
+                    push!(body.args, :($sd_orig = (tf.y.scale[1] ./ $predictors_sd) .* $variance_ranef))
                 end
                 # Hidden centering offset (no ranef intercept to absorb X-centering):
                 # not user-facing, consumed only by predict.jl (T1b) via a private DimStack layer.
@@ -356,8 +314,8 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
                     push!(body.args, :($intercept_orig = $ranef_matrix))
                     push!(body.args, :($sd_orig = $variance_ranef))
                 else
-                    push!(body.args, :($intercept_orig = y_std .* $ranef_matrix))
-                    push!(body.args, :($sd_orig = y_std .* $variance_ranef))
+                    push!(body.args, :($intercept_orig = tf.y.scale[1] .* $ranef_matrix))
+                    push!(body.args, :($sd_orig = tf.y.scale[1] .* $variance_ranef))
                 end
                 push!(return_list, :($intercept_out=$intercept_orig))
                 push!(return_list, :($sd_out=$sd_orig))
@@ -377,29 +335,26 @@ function _generated_quantities(family::Type{<:Distribution}, has_fixed_effects::
 end
 
 #### Main function to assemble the model code
-function build_model_body(family::Type{<:Distribution}, modeldata::ModelData, prior::RegressionPrior)
+function build_model_body(family::Type{<:Distribution}, modeldata::ModelData)
     model_ranef = modeldata.Z
     weighted = is_weighted(modeldata)
 
     # Empty quote
     body = Expr(:block)
 
-    # Data transformation
-    push!(body.args, _standardise_data(family, has_fixed_effects(modeldata), has_random_effects(modeldata), model_ranef))
-
     # Prior
     if has_intercept(modeldata)
-        push!(body.args, _intercept(prior.intercept))
+        push!(body.args, _intercept())
     end
     if has_fixed_effects(modeldata)
-        push!(body.args, _fixed_effects(prior.fixed_effects))
+        push!(body.args, _fixed_effects())
     end
     if has_random_effects(modeldata)
-        push!(body.args, _random_effects(prior.random_effects, modeldata))
+        push!(body.args, _random_effects(modeldata))
     end
 
     if family ∉ [Bernoulli, Poisson] #Bernoulli and Poisson have no auxiliary parameter
-        push!(body.args, _auxiliary_parameter(prior.auxiliary, family))
+        push!(body.args, _auxiliary_parameter(family))
     end
 
     # Linear Model
@@ -419,10 +374,10 @@ function build_model_body(family::Type{<:Distribution}, modeldata::ModelData, pr
 end
 
 #### Wrapper function for the above, to handle some additional logic
-function construct_model(family::Type{<:Distribution}, modeldata::ModelData, prior::RegressionPrior, show_code::Bool=false)
+function construct_model(family::Type{<:Distribution}, modeldata::ModelData, show_code::Bool=false)
 
     #handle logic here
-    body = build_model_body(family, modeldata, prior)
+    body = build_model_body(family, modeldata)
 
     # build model code
     # Unique name per generated model: DynamicPPL dispatches model evaluation on
@@ -431,7 +386,8 @@ function construct_model(family::Type{<:Distribution}, modeldata::ModelData, pri
     # models with different parameter counts, causing BoundsErrors during sampling.
     fname = gensym(:turing_regression)
     model_code = quote
-        @model function $(fname)(y, X, n_groups, group_idx, group_predictors, weights)
+        @model function $(fname)(y, X, n_groups, group_idx, group_predictors, weights, tf,
+            prior_intercept, prior_fixed_effects, prior_random_effects, prior_auxiliary)
             nobs, npredictors = size(X)
             $body
         end

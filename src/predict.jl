@@ -48,7 +48,7 @@ function posterior_predict(
     type::Symbol=:posterior, allow_new_levels::Bool=false, kwargs...,
 )
     md_new = extract_model_data(TR.formula, new_data)
-    z = new_random_effects(TR, new_data; allow_new_levels)
+    z = new_random_effects(TR.modeldata, new_data; allow_new_levels)
     return _predict_fn(type)(TR, md_new.predictors.X, z; kwargs...)
 end
 
@@ -57,54 +57,8 @@ function posterior_predict(
     type::Symbol=:posterior, allow_new_levels::Bool=false, kwargs...,
 )
     md_new = extract_model_data(TR.formula, new_data)
-    z = new_random_effects(TR, new_data; allow_new_levels)
+    z = new_random_effects(TR.modeldata, new_data; allow_new_levels)
     return _predict_fn(type)(f, TR, md_new.predictors.X, z; kwargs...)
-end
-
-"""
-    new_random_effects(TR::TuringRegression, new_data; allow_new_levels=false)
-
-Rebuild ranef structure for `new_data` via `extract_model_data` (same path used at fit
-time), then remap each grouping level onto `TR.modeldata.Z`'s original level order/index.
-
-By default errors clearly if `new_data` contains a grouping level not seen during
-fitting. With `allow_new_levels=true`, unseen levels get a `@warn` and are marked (level
-index `0`) so `posterior_predict` uses the population-mean (zero) random effect for those rows,
-instead of erroring.
-"""
-function new_random_effects(TR::TuringRegression, new_data; allow_new_levels::Bool=false)
-    !has_random_effects(TR) && return nothing
-    md_new = extract_model_data(TR.formula, new_data)
-    return [
-        _remap_levels(re_new, re_orig; allow_new_levels) for
-        (re_new, re_orig) in zip(md_new.Z, TR.modeldata.Z)
-    ]
-end
-
-# Sentinel level index 0 (never a valid 1-based level) marks an unseen level.
-function _remap_levels(re_new::RandomEffect, re_orig::RandomEffect; allow_new_levels::Bool=false)
-    unseen = Any[]
-    level_index = map(re_new.level_index) do i
-        key = re_new.levels[i]
-        idx = findfirst(==(key), re_orig.levels)
-        if !isnothing(idx)
-            idx
-        elseif allow_new_levels
-            push!(unseen, key)
-            0
-        else
-            error(
-                "predict: unseen level '$key' for grouping variable :$(re_orig.variable) — " *
-                "all grouping levels must have been present when the model was fitted. " *
-                "Pass allow_new_levels=true to use population-mean random effects for new levels.",
-            )
-        end
-    end
-    if !isempty(unseen)
-        @warn "predict: unseen level(s) for grouping variable :$(re_orig.variable); using population-mean (zero) random effect for these rows." levels =
-            unique(unseen)
-    end
-    return RandomEffect(re_orig.variable, re_orig.levels, level_index, re_new.predictors)
 end
 
 #### Internal functions ####
@@ -117,7 +71,7 @@ function _add_random_effects!(μ::AbstractArray, TR::TuringRegression, z::Vector
         layer = Array(draws(TR, re.variable; kwargs...))
         effect_names = collect(dims(TR.parameters[re.variable], :effect))
         intercept_pos = re.predictors.has_intercept ? findfirst(==(:Intercept), effect_names) : nothing
-        slope_positions = re.predictors.has_fixed_effects ? findall(!=(:Intercept), effect_names) : Int[]
+        slope_positions = has_fixed_effects(re.predictors) ? findall(!=(:Intercept), effect_names) : Int[]
         for c in 1:size(μ, 3), r in axes(μ, 1)
             g = re.level_index[r]
             g == 0 && continue

@@ -3,7 +3,6 @@
 
 struct Predictors
     has_intercept::Bool
-    has_fixed_effects::Bool
     X::AbstractMatrix
     X_names::Union{Nothing,Vector{String}} #TODO would love to cut this
 end
@@ -25,75 +24,51 @@ end
 # Derived flags — replace the old (deleted) ModelInfo struct. Multiple-dispatch
 # accessors so callers don't need to know whether they hold a ModelData or a TR.
 has_intercept(md::ModelData) = md.predictors.has_intercept
-has_fixed_effects(md::ModelData) = md.predictors.has_fixed_effects
+has_fixed_effects(p::Predictors) = size(p.X, 2) > 0
+has_fixed_effects(re::RandomEffect) = has_fixed_effects(re.predictors)
+has_fixed_effects(md::ModelData) = has_fixed_effects(md.predictors)
 has_random_effects(md::ModelData) = !isempty(md.Z)
 is_weighted(md::ModelData) = !isnothing(md.weights)
 
 #### Functions to extract information from the formula
 
-## TODO drop for StatsModels.has_intercept? rework somehow
-function has_intercept(formula) # allow implicit intercepts
-    rhs = formula.rhs
-    rhs = if rhs isa MatrixTerm
-        rhs.terms
-    elseif rhs isa Term
-        [rhs]
-    else
-        rhs
-    end
-    for term in rhs
-        term isa ConstantTerm || continue
-        term.n == 0 && return false
-        term.n == 1 && return true
-        error("Intercept must be 0 or 1, got $(term.n)")
-    end
-    true  # implicit intercept when no ConstantTerm found
-end
-
-#TODO replace with known statsAPI stuff if we can?
-function get_fixef_names(formula, data)
-    coefs = coefnames(ModelFrame(formula, data))
-    filter!(x -> !occursin(" | ", x), coefs) # Drop random effects TODO do this properly
-    if has_intercept(formula)
-        return coefs[2:end]
-    else
-        return coefs
-    end
+# Single reusable extractor: after `apply_schema(...; MixedModel)`, the fixed-effect
+# part of the RHS is always exactly one MatrixTerm — whether or not any random-effects
+# terms are present — and each RandomEffectsTerm's `.lhs` is the same kind of MatrixTerm.
+# So this one function builds a Predictors for both fixef and every ranef term.
+function extract_predictors(term::MatrixTerm, d::NamedTuple)
+    term_has_intercept = StatsModels.hasintercept(term)
+    cols = modelcols(term, d)
+    X = term_has_intercept ? cols[:, 2:end] : cols
+    X_names = term_has_intercept ? coefnames(term)[2:end] : coefnames(term)
+    return Predictors(term_has_intercept, X, X_names)
 end
 
 # Get model data out, y, X and Z. Thanks to claude for a bit of help
 function extract_model_data(formula, data, weights=nothing)
     # Apply schema - validates and types everything
-    formula_has_intercept = has_intercept(formula)
     f = apply_schema(formula, schema(formula, data), MixedModel)
     d = columntable(data)
 
     # Extract y
     y = modelcols(f.lhs, d)
 
-    # Separate fixed and random terms
+    # Separate fixed and random terms. The fixed part is always a single MatrixTerm
+    # (possibly intercept-only / zero predictors), whether or not ranef terms exist.
     all_terms = f.rhs isa Tuple ? collect(f.rhs) : [f.rhs]
     is_re(t) = t isa RandomEffectsTerm
+    fixed_term = only(filter(!is_re, all_terms))
     re_terms = filter(is_re, all_terms)
 
-    if isempty(re_terms)
-        X = modelcols(f.rhs, d)
-        Z = RandomEffect[]
-    else
-        X = MixedModels.modelmatrix(MixedModel(formula, data))
-        Z = [extract_random_effect(t, d) for t in re_terms]
-        vars = [z.variable for z in Z]
-        if length(unique(vars)) < length(vars)
-            dupes = [v for v in unique(vars) if count(==(v), vars) > 1]
-            @warn "Multiple random-effects terms share grouping variable(s) $dupes — their DimStack layers collide, later term overwrites earlier"
-        end
+    predictors = extract_predictors(fixed_term, d)
+    Z = [extract_random_effect(t, d) for t in re_terms]
+
+    vars = [z.variable for z in Z]
+    if length(unique(vars)) < length(vars)
+        dupes = [v for v in unique(vars) if count(==(v), vars) > 1]
+        @warn "Multiple random-effects terms share grouping variable(s) $dupes — their DimStack layers collide, later term overwrites earlier"
     end
 
-    #TODO check this intercept handling is it right?
-    X = formula_has_intercept ? X[:, 2:end] : X
-    X_names = get_fixef_names(formula, data)
-
-    predictors = Predictors(formula_has_intercept, size(X, 2) > 0, X, X_names)
     return ModelData(f, y, predictors, Z, weights)
 end
 
@@ -112,22 +87,52 @@ function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
         Symbol(join([t.sym for t in term.rhs.terms], ":"))
     end
 
-    # Check for intercept in column names
-    term_has_intercept = StatsModels.hasintercept(term.lhs)
-
-    # Get predictor matrix from LHS using modelcols
-    X = let
-        cols = modelcols(term.lhs, d)
-        term_has_intercept ? cols[:, 2:end] : cols
-    end
-    X_names = let
-        predictor_terms = filter(t -> !(t isa ConstantTerm || t isa InterceptTerm), term.lhs.terms)
-        [string(t) for t in predictor_terms]
-    end
-
-    has_fixed_effects = size(X, 2) > 0
-
-    predictors = Predictors(term_has_intercept, has_fixed_effects, X, X_names)
+    predictors = extract_predictors(term.lhs, d)
 
     return RandomEffect(variable, levels, level_index, predictors)
+end
+
+"""
+    new_random_effects(reference::ModelData, new_data; allow_new_levels=false)
+
+Rebuild ranef structure for `new_data` via `extract_model_data` (same path used at fit
+time), then remap each grouping level onto `reference`'s (the fitted model's) original
+level order/index.
+
+By default errors clearly if `new_data` contains a grouping level not seen during
+fitting. With `allow_new_levels=true`, unseen levels get a `@warn` and are marked (level
+index `0`) so prediction uses the population-mean (zero) random effect for those rows,
+instead of erroring.
+"""
+function new_random_effects(reference::ModelData, new_data; allow_new_levels::Bool=false)
+    has_random_effects(reference) || return nothing
+    md_new = extract_model_data(reference.f, new_data)
+    return [
+        _remap_levels(re_new, re_orig; allow_new_levels) for
+        (re_new, re_orig) in zip(md_new.Z, reference.Z)
+    ]
+end
+
+# Sentinel level index 0 (never a valid 1-based level) marks an unseen level.
+function _remap_levels(re_new::RandomEffect, re_orig::RandomEffect; allow_new_levels::Bool=false)
+    unseen = Any[]
+    level_index = map(re_new.level_index) do i
+        key = re_new.levels[i]
+        idx = findfirst(==(key), re_orig.levels)
+        !isnothing(idx) && return idx
+        if !allow_new_levels
+            error(
+                "predict: unseen level '$key' for grouping variable :$(re_orig.variable) — " *
+                "all grouping levels must have been present when the model was fitted. " *
+                "Pass allow_new_levels=true to use population-mean random effects for new levels.",
+            )
+        end
+        push!(unseen, key)
+        return 0
+    end
+    if !isempty(unseen)
+        @warn "predict: unseen level(s) for grouping variable :$(re_orig.variable); using population-mean (zero) random effect for these rows." levels =
+            unique(unseen)
+    end
+    return RandomEffect(re_orig.variable, re_orig.levels, level_index, re_new.predictors)
 end

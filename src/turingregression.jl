@@ -273,14 +273,14 @@ function fit!(
 
         effect_names = Symbol[]
         re.predictors.has_intercept && push!(effect_names, :Intercept)
-        re.predictors.has_fixed_effects && append!(effect_names, Symbol.(re.predictors.X_names))
+        has_fixed_effects(re.predictors) && append!(effect_names, Symbol.(re.predictors.X_names))
 
         # Main layer: (effect, group, draw, chain)
-        if re.predictors.has_intercept & re.predictors.has_fixed_effects
+        if re.predictors.has_intercept & has_fixed_effects(re.predictors)
             combined = [vcat(reshape(param_dict[intercept_sym][i, j], 1, :), param_dict[beta_sym][i, j])
                         for i in axes(gq, 1), j in axes(gq, 2)]
             main_arr = stack(combined)
-        elseif re.predictors.has_fixed_effects
+        elseif has_fixed_effects(re.predictors)
             main_arr = stack(param_dict[beta_sym])
         else # re.predictors.has_intercept only
             combined = [reshape(param_dict[intercept_sym][i, j], 1, :) for i in axes(gq, 1), j in axes(gq, 2)]

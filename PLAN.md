@@ -283,29 +283,86 @@ Fixed, in order:
 - `extract_model_data`: `weights` param given a `=nothing` default — predict.jl's
   `posterior_predict(TR, new_data::DataFrame)` path calls it with 2 args.
 
-**Not yet verified**: no scratch `fit!()` run this session (compiles clean, but
-NUTS run itself untested against this rewrite) — do that before trusting it.
-Round-trip/V-invariant re-verification (§5.6) still pending, comes with T3 (§3
-steps 3-4 below, not started).
+**Verified 2026-07-16 (later same day)**: scratch `fit!()` run for fixef-only,
+ranef intercept+slope, and ranef slope-only (Normal family) — all fit clean, no
+errors. §6 fully resolved. Round-trip/V-invariant re-verification (§5.6) still
+pending, comes with T3 (§3 steps 3-4, not started).
 
 ## §7 SEQUENCE (user-ordered)
 
 Build + scratch-test at every step. NO `Pkg.test()` until the very end.
 
-1. **Simplify formula_handlers** — lean on StatsModels/MixedModels existing
-   functions instead of hand-rolled parsing; add ONE reusable `LinearModelData`
-   extraction fn used by both fixef and each ranef. Fix §6 formula_handlers bugs.
+1. **Simplify formula_handlers** — DONE 2026-07-16. See §7a below.
 2. **Fix fit!/model.jl grouping** — resurrect the slim helper that computes
    n_groups/group_idx/group_predictors once from the (std) ModelData and calls the
    unpacked model (§5.3). Fix §6 model.jl bugs. Branch compiles + scratch fit works.
+   DONE — see §6 verification above; `_build_model_with_data` already resurrected
+   as part of the §6 fixes, confirmed working by the scratch fits.
 3. **Scaling extraction** — `Transform` + `standardise`; move scaling OUT of
    model.jl into Julia; feed std data to model. Round-trip test. Priors as args (5.1).
+   NOT STARTED.
 4. **FlexiChains + unscaling** — swap chain type; `returned(...; stack=true)`;
    `unstandardise` builds the DimStack (deletes _generated_quantities + extraction
    loop). Then T4 prior-map, T5 likelihood merge, T3c dim renames.
 
 Then, and only then, `Pkg.test()` full re-verify (V5/V13/V14/V15/V20).
-```
+
+## §7a STEP 1 DONE — formula_handlers simplified (2026-07-16)
+
+`extract_predictors(term::MatrixTerm, d)` is now the ONE reusable extraction fn
+(§7 step 1's ask). Key insight, confirmed by scratch probe: after
+`apply_schema(formula, schema(formula, data), MixedModel)`, the fixed-effect part
+of `f.rhs` is **always exactly one `MatrixTerm`** — whether or not any
+random-effects terms are present, even when it's intercept-only or has zero
+predictors (`0 + (1|g)` still yields a bare `MatrixTerm{Tuple{InterceptTerm{false}}}`).
+Each `RandomEffectsTerm.lhs` is the same kind of `MatrixTerm`. So one function,
+using `StatsModels.hasintercept`/`coefnames` on the term, builds `Predictors` for
+both fixef and every ranef — replacing the old duplicated hand-rolled logic.
+
+Deleted entirely (no longer needed):
+- `has_intercept(formula)` — custom `ConstantTerm`-scanning function.
+- `get_fixef_names` — the `ModelFrame(formula, data)` + `coefnames` + string-filter
+  workaround. `coefnames(term)` on the MatrixTerm gives the same expanded
+  per-column names directly (verified: correctly expands multi-level categoricals,
+  e.g. `["(Intercept)", "HP", "gp: 6", "gp: 8"]`).
+
+Also (from a follow-up in-session request): **`Predictors.has_fixed_effects` field
+removed**, replaced by a function `has_fixed_effects(p::Predictors) = size(p.X, 2)
+> 0`, with dispatch overloads for `RandomEffect`/`ModelData`/`TuringRegression`
+mirroring the existing accessor pattern. All `.predictors.has_fixed_effects` field
+accesses across `model.jl`/`model_cache.jl`/`predict.jl`/`turingregression.jl`
+rewritten to the function call. Caught a shadowing bug this introduced: `model.jl`'s
+`_standardise_data`/`_generated_quantities` each have a local `Bool` parameter
+literally named `has_fixed_effects` — inside those functions the new function name
+was shadowed, so calls at the ranef-loop sites needed `TuringRegressions.has_fixed_effects(...)`
+to reach the real generic instead of erroring "objects of type Bool are not callable".
+
+Also moved (from `predict.jl`, at user's request — these are formula/`ModelData`
+concerns, not predict concerns): `new_random_effects`/`_remap_levels`. Signature
+changed from `new_random_effects(TR::TuringRegression, new_data; ...)` to
+`new_random_effects(reference::ModelData, new_data; ...)` — decouples
+`formula_handlers.jl` from the `TuringRegression` type (defined later in the
+include order; needed to avoid a forward-reference) and lines up with §3's
+`apply_formula(...; reference=...)` design. `predict.jl` call sites updated to
+pass `TR.modeldata`.
+
+**Bug found + fixed during verification** (pre-existing, not introduced by this
+session, but caught while scratch-testing the moved functions):
+`extract_random_effect` used `MixedModels._ranef_refs`, which looks grouping
+values up in the term's fitted contrasts dict and throws `KeyError` on any
+level unseen at fit time. This broke `posterior_predict(TR, new_data::DataFrame)`
+on data with a new grouping level — it errored inside `extract_model_data`
+*before* `_remap_levels`'s `allow_new_levels` handling ever got a chance to run,
+regardless of the flag. Fixed by replacing with an own `_ranef_group_values`
+(handles plain `CategoricalTerm` and `InteractionTerm` grouping, e.g.
+`item:subject`) that reads grouping values straight off the raw data instead of
+through the fitted contrasts dict. This also resolves the §8 NOTE ("item-1 must
+not deepen reliance on `_ranef_refs`") — the package no longer uses it at all.
+
+Verified via scratch script (fixef, ranef intercept+slope incl. predict on
+fitted data / new subset data / new data with an unseen level both with and
+without `allow_new_levels`, ranef slope-only): all pass, unseen-level case now
+correctly warns + zero-fills or errors per the flag instead of crashing.
 
 ## §8 REVIEW RESOLUTIONS (accepted)
 

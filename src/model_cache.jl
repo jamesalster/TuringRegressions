@@ -11,8 +11,8 @@ const MODEL_CACHE = Dict{Any,Tuple{Function,Expr}}()
 const MODEL_CACHE_LOCK = ReentrantLock()
 
 function _ranef_cache_key(ranef::RandomEffect)
-    n_predictors = ranef.predictors.has_fixed_effects ? size(ranef.predictors.X, 2) : 0
-    return (ranef.variable, ranef.predictors.has_intercept, ranef.predictors.has_fixed_effects, n_predictors)
+    n_predictors = has_fixed_effects(ranef.predictors) ? size(ranef.predictors.X, 2) : 0
+    return (ranef.variable, ranef.predictors.has_intercept, has_fixed_effects(ranef.predictors), n_predictors)
 end
 
 function _prior_cache_key(prior::RegressionPrior)

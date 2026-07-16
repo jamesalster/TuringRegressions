@@ -14,7 +14,7 @@ using PrettyTables
 using MixedModels
 using Random
 using StatisticalMeasures
-using ParetoSmooth
+#using ParetoSmooth #Broken becayse we need more modern DynamicPPL
 using MCMCDiagnosticTools
 
 using MacroTools: prettify
@@ -36,7 +36,7 @@ include("parametermethods.jl")
 include("predict.jl")
 include("summary.jl")
 include("metrics.jl")
-include("comparison.jl")
+#include("comparison.jl")
 include("plots.jl")
 
 export TuringRegression,
@@ -48,8 +48,8 @@ export TuringRegression,
     predictors,
     outcome_as_distribution,
     predict,
-    psis_loo,
-    loo_compare,
+    #psis_loo,
+    #loo_compare,
     calculate_metrics,
     default_metrics,
     default_prior,

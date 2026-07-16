@@ -1,5 +1,6 @@
 
 #API for ParetoSmooth
+# Currently unused
 
 """
     psis_loo(TR::TuringRegression)

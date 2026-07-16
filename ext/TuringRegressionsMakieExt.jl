@@ -40,6 +40,7 @@ function Makie.plot!(plot::LineRibbon)
     linewidth = plot.linewidth[]
     linecolor = plot.linecolor[]
     alpha = plot.alpha[]
+    colorscale = plot.colorscale[]
 
     if size(y, 2) != length(x)
         throw(DimensionMismatch("size(y, 2) must be equal to the length of x"))
@@ -85,9 +86,9 @@ function conditional_dependency(
     end
     N = 200
     pp = predictors(TR, :fixef)
-    id = findfirst(==(variable), TR.X_names)
+    id = findfirst(==(string(variable)), TR.X_names)
     means = mean(pp; dims=1)
-    predict_range = range.(extrema(pp[var = At(variable)])..., N)
+    predict_range = range.(extrema(pp[var = At(string(variable))])..., N)
 
     # make prediction_grid
     predgrid = zeros(N, length(means))

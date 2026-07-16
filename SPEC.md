@@ -118,4 +118,8 @@ T10|x|`calculate_metrics(TR, metrics::Vector, fun=nothing; kwargs...)` (src/metr
 
 T11|.|T1 pass-2 aborted early: `correlated intercept + slope (1+Days\|Subject)` @testset (test/runtests.jl:143) has 2 test failures, and since it's a top-level (non-nested) `@testset` with failures, Julia's `Test.jl` throws on completion — killed everything after it in `runtests.jl` (Predict, Weighted fit, model_warnings, Show/summary, benchmark table never ran). Once T9 lands a fix (or a decision to skip/loosen that one testset), run the rest of the suite and confirm it's clean end to end — don't leave it unverified just because the file happened to abort partway|T1,T9
 
+T12|.|`Weighted fit (T10, V14)` @testset (test/runtests.jl) currently skipped (T11 diagnostic): same-seed comparison of weighted (weights=ones) vs unweighted model drifts past atol=0.5 under quickfit's cheap N=300 — likely because `_weighted_likelihood`'s `@addlogprob!` code path vs `_likelihood`'s `~` consume RNG differently even with identical seed, not a math bug (weights=1 is mathematically identical to unweighted). Investigate: confirm no real bug in `_weighted_likelihood` (src/model.jl), then either loosen tolerance to match realistic MCMC noise at N=300, compare via overlapping credible intervals instead of point atol, or bump this test's N. Re-enable testset once resolved|V14
+
+T13|.|First `using TuringRegressions` / first `Pkg.test()` pays full TTFX (Turing/DynamicPPL/model-macro compile). Add a `PrecompileTools.@compile_workload` block (small `turing_glm` fit, `N`/`nchains` minimal) in `src/TuringRegressions.jl` to precompile the hot path ahead of time, cutting first-run latency|
+
 - P8: `TR.link` field (predict.jl) — used internally, V1-bounded to the 5 families, not user-facing.

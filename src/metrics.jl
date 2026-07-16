@@ -89,7 +89,7 @@ function calculate_metrics(
         metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}, Dim{:chain}))
     end
 
-    return dropdims ? drop_single_dims(metric_table) : metric_table
+    return dropdims ? _drop_single_dims(metric_table) : metric_table
 end
 
 function calculate_metrics(
@@ -101,7 +101,7 @@ function calculate_metrics(
 )::DimArray
     metric_table = calculate_metrics(TR, metrics; dropdims=false, kwargs...)
     metric_table = mapslices(fun, metric_table; dims=2)
-    return dropdims ? drop_single_dims(metric_table) : metric_table
+    return dropdims ? _drop_single_dims(metric_table) : metric_table
 end
 
 # Get the default metrics for a model family

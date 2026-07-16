@@ -62,12 +62,12 @@ model = turing_glm(@formula(mpg ~ hp + wt), mtcars, Normal)
 fit!(model)
 ```
 """
-function turing_glm(formula::FormulaTerm, 
-    data::DataFrame, 
-    family::Type{<:Distribution}, 
-    priors::RegressionPrior=default_prior(family), 
+function turing_glm(formula::FormulaTerm,
+    data::DataFrame,
+    family::Type{<:Distribution};
+    priors::RegressionPrior=default_prior(family),
     weights::Union{Nothing, Vector{Float64}}=nothing,
-    show_code::Bool=false) 
+    show_code::Bool=false)
 
     if family ∉ [Normal, TDist, Bernoulli, Poisson, NegativeBinomial]
         error("Family: $(string(family)) not supported.")

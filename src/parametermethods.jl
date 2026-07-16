@@ -3,10 +3,10 @@
 # Utility function for selecting draws and collapsing chains from a samples AxisArray
 function _process_draws(DA::Union{DimArray, DimStack}; drop_warmup::Int=200, n_draws::Int=-1, collapse::Bool=true)
     # Drop warmup
-    arr = DA[draw=(drop_warmup + 1):size(DA, :draw)] 
+    arr = DA[draw=(drop_warmup + 1):size(DA, :draw)]
     @assert n_draws <= size(arr, :draw) "$n_draws draws is too many from $(size(arr, :draw)) available. Note that n_draws is applied per chain."
     # Select draws
-    arr = n_draws > 0 ? arr[draw=1:n_draws] : arr 
+    arr = n_draws > 0 ? arr[draw=1:n_draws] : arr
     # Collapse
     arr = collapse ? mergedims(arr, (:draw, :chain) => :draw) : arr
     @assert size(arr, :draw) > 0 "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"

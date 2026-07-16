@@ -13,7 +13,14 @@ end
 #### Functions to extract information from the formula 
 
 function has_intercept(formula) # allow implicit intercepts
-    rhs = formula.rhs isa Term ? [formula.rhs] : formula.rhs
+    rhs = formula.rhs
+    rhs = if rhs isa MatrixTerm
+        rhs.terms
+    elseif rhs isa Term
+        [rhs]
+    else
+        rhs
+    end
     for term in rhs
         term isa ConstantTerm || continue
         term.n == 0 && return false

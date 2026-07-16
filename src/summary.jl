@@ -79,7 +79,7 @@ function Base.summary(
     #metrics
     if show_metrics
         metric_tabs = map(
-            f -> default_metrics(TR, f; drop_warmup=drop_warmup, kwargs...), funs_all
+            f -> default_metrics(f, TR; drop_warmup=drop_warmup, kwargs...), funs_all
         )
         metric_tab = hcat(metric_tabs...)
     end
@@ -91,17 +91,17 @@ function Base.summary(
         io,
         chain_info;
         title="Fixed Effects",
-        header=collect(keys(chain_info)),
+        column_labels=collect(keys(chain_info)),
         row_labels=param_names,
-        row_label_column_title="Parameter",
+        stubhead_label="Parameter",
         highlighters=make_highlighters(ncols),
-        formatters=(
-            ft_printf("%5.2f", 1:(ncols - 5)),
-            ft_printf("%5.2g", ncols-4),
-            ft_printf("%5.0f", [ncols - 2, ncols - 3]),
-            ft_printf("%5.3f", ncols - 1),
-            ft_printf("%5.3f", ncols),
-        ),
+        formatters=[
+            fmt__printf("%5.2f", collect(1:(ncols - 5))),
+            fmt__printf("%5.2g", [ncols - 4]),
+            fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
+            fmt__printf("%5.3f", [ncols - 1]),
+            fmt__printf("%5.3f", [ncols]),
+        ],
         default_options...,
     )
     if TR.modelinfo.has_random_effects
@@ -117,17 +117,17 @@ function Base.summary(
                     io,
                     level_info;
                     title="Random Effects: $group ($eff)",
-                    header=collect(keys(level_info)),
+                    column_labels=collect(keys(level_info)),
                     row_labels=levels,
-                    row_label_column_title="Level",
+                    stubhead_label="Level",
                     highlighters=make_highlighters(ncols),
-                    formatters=(
-                        ft_printf("%5.2f", 1:(ncols - 5)),
-                        ft_printf("%5.2g", ncols-4),
-                        ft_printf("%5.0f", [ncols - 2, ncols - 3]),
-                        ft_printf("%5.3f", ncols - 1),
-                        ft_printf("%5.3f", ncols),
-                    ),
+                    formatters=[
+                        fmt__printf("%5.2f", collect(1:(ncols - 5))),
+                        fmt__printf("%5.2g", [ncols - 4]),
+                        fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
+                        fmt__printf("%5.3f", [ncols - 1]),
+                        fmt__printf("%5.3f", [ncols]),
+                    ],
                     default_options...,
                 )
             end
@@ -139,17 +139,17 @@ function Base.summary(
                 io,
                 ranef_info;
                 title="Random Effects: $group (SD)",
-                header=collect(keys(ranef_info)),
+                column_labels=collect(keys(ranef_info)),
                 row_labels=effect_names,
-                row_label_column_title="Effect",
+                stubhead_label="Effect",
                 highlighters=make_highlighters(ncols),
-                formatters=(
-                    ft_printf("%5.2f", 1:(ncols - 5)),
-                    ft_printf("%5.2g", ncols-4),
-                    ft_printf("%5.0f", [ncols - 2, ncols - 3]),
-                    ft_printf("%5.3f", ncols - 1),
-                    ft_printf("%5.3f", ncols),
-                ),
+                formatters=[
+                    fmt__printf("%5.2f", collect(1:(ncols - 5))),
+                    fmt__printf("%5.2g", [ncols - 4]),
+                    fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
+                    fmt__printf("%5.3f", [ncols - 1]),
+                    fmt__printf("%5.3f", [ncols]),
+                ],
                 default_options...,
             )
 
@@ -160,10 +160,10 @@ function Base.summary(
                     io,
                     Matrix(corr_point);
                     title="Random Effects: $group (Correlation)",
-                    header=effect_names,
+                    column_labels=effect_names,
                     row_labels=effect_names,
-                    row_label_column_title="Effect",
-                    formatters=(ft_printf("%5.2f")),
+                    stubhead_label="Effect",
+                    formatters=[fmt__printf("%5.2f")],
                     default_options...,
                 )
             end
@@ -174,10 +174,10 @@ function Base.summary(
             io,
             Matrix(metric_tab);
             title="Prediction Metrics",
-            header=func_names_all,
+            column_labels=func_names_all,
             row_labels=Array(dims(first(metric_tabs), 1)),
-            row_label_column_title="Metric",
-            formatters=(ft_printf("%5.3f")),
+            stubhead_label="Metric",
+            formatters=[fmt__printf("%5.3f")],
             default_options...,
         )
     end
@@ -233,28 +233,25 @@ end
 
 # Highlighters
 function make_highlighters(ncols)
-    return (
+    return [
         #R hat
-        Highlighter(
+        TextHighlighter(
             (data, i, j) -> (j == ncols && data[j][i] > 1.05), crayon"bold magenta"
         ),
-        Highlighter((data, i, j) -> (j == ncols && data[j][i] > 1.02), crayon"magenta"),
+        TextHighlighter((data, i, j) -> (j == ncols && data[j][i] > 1.02), crayon"magenta"),
         #ESS
-        Highlighter(
+        TextHighlighter(
             (data, i, j) -> (j ∈ [ncols-1, ncols-2] && data[j][i] < 100),
             crayon"bold magenta",
         ),
-        Highlighter(
+        TextHighlighter(
             (data, i, j) -> (j ∈ [ncols-1, ncols-2] && data[j][i] < 250), crayon"magenta"
         ),
-    )
+    ]
 end
 
 # Default table options
 const default_options = (;
-    #tf=tf_compact,
-    header_crayon=crayon"bold",
-    row_label_header_crayon=crayon"bold",
-    crop=:horizontal,
-    show_subheader=false,
+    style=TextTableStyle(; column_label=crayon"bold", stubhead_label=crayon"bold"),
+    fit_table_in_display_horizontally=false,
 )

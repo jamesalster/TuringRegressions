@@ -1,10 +1,11 @@
 """
-    predict(TR::TuringRegression; type=:posterior, kwargs...)
-    predict(TR::TuringRegression, X::AbstractArray; type=:posterior, kwargs...)
-    predict(TR::TuringRegression, new_data::DataFrame; type=:posterior, kwargs...)
-    predict(f::Function, TR::TuringRegression, args...; type=:posterior, kwargs...)
+    posterior_predict(TR::TuringRegression; type=:posterior, kwargs...)
+    posterior_predict(TR::TuringRegression, X::AbstractArray; type=:posterior, kwargs...)
+    posterior_predict(TR::TuringRegression, new_data::DataFrame; type=:posterior, kwargs...)
+    posterior_predict(f::Function, TR::TuringRegression, args...; type=:posterior, kwargs...)
 
-Generate predictions for new data or fitted data.
+Generate full-posterior predictions for new data or fitted data (primary, richest API —
+see `predict` for the StatsAPI-conformant point-estimate wrapper).
 Passing a function (e.g. median) first aggregates the draws with that function.
 
 # Arguments
@@ -28,21 +29,21 @@ function _resolve_z(TR::TuringRegression, X::AbstractArray)
     !TR.modelinfo.has_random_effects && return nothing
     X === TR.X && return TR.z
     error(
-        "predict() with a raw design matrix does not support random-effects models " *
-        "(no grouping information available). Use predict(TR) for fitted data or " *
-        "predict(TR, new_data::DataFrame) for new data.",
+        "posterior_predict() with a raw design matrix does not support random-effects models " *
+        "(no grouping information available). Use posterior_predict(TR) for fitted data or " *
+        "posterior_predict(TR, new_data::DataFrame) for new data.",
     )
 end
 
-function predict(TR::TuringRegression, X::AbstractArray=TR.X; type::Symbol=:posterior, kwargs...)
+function posterior_predict(TR::TuringRegression, X::AbstractArray=TR.X; type::Symbol=:posterior, kwargs...)
     return _predict_fn(type)(TR, X, _resolve_z(TR, X); kwargs...)
 end
 
-function predict(f::Function, TR::TuringRegression, X::AbstractArray=TR.X; type::Symbol=:posterior, kwargs...)
+function posterior_predict(f::Function, TR::TuringRegression, X::AbstractArray=TR.X; type::Symbol=:posterior, kwargs...)
     return _predict_fn(type)(f, TR, X, _resolve_z(TR, X); kwargs...)
 end
 
-function predict(
+function posterior_predict(
     TR::TuringRegression, new_data::DataFrame;
     type::Symbol=:posterior, allow_new_levels::Bool=false, kwargs...,
 )
@@ -51,7 +52,7 @@ function predict(
     return _predict_fn(type)(TR, X, z; kwargs...)
 end
 
-function predict(
+function posterior_predict(
     f::Function, TR::TuringRegression, new_data::DataFrame;
     type::Symbol=:posterior, allow_new_levels::Bool=false, kwargs...,
 )
@@ -68,7 +69,7 @@ time), then remap each grouping level onto `TR.z`'s original level order/index.
 
 By default errors clearly if `new_data` contains a grouping level not seen during
 fitting. With `allow_new_levels=true`, unseen levels get a `@warn` and are marked (level
-index `0`) so `predict` uses the population-mean (zero) random effect for those rows,
+index `0`) so `posterior_predict` uses the population-mean (zero) random effect for those rows,
 instead of erroring.
 """
 function new_random_effects(TR::TuringRegression, new_data; allow_new_levels::Bool=false)

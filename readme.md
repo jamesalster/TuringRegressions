@@ -63,15 +63,18 @@ draws(mean, re_mod, :Subject)[effect=At(:Days), group=At(308)] # one subject's s
 draws(re_mod, :Subject_sd) # group-level SDs, dims (effect, draw)
 draws(re_mod, :Subject_corr) # intercept/slope correlation matrix, dims (effect, effect2, draw)
 
-# Make predictions
-predict(mod)  # For original data
-predict(mod, type=:epred)  # Expected values
-predict(mod, type=:linpred)  # Linear predictor
+# Make predictions (full posterior — the package's primary predict API)
+posterior_predict(mod)  # For original data
+posterior_predict(mod, type=:epred)  # Expected values
+posterior_predict(mod, type=:linpred)  # Linear predictor
 
 # Predict on new data
 new_data = [6.0 200.0; 8.0 350.0]
-predict(mod, new_data) # Uses fitted posterior draws
-predict(mean, mod, new_data) # Optionally pass function to reduce
+posterior_predict(mod, new_data) # Uses fitted posterior draws
+posterior_predict(mean, mod, new_data) # Optionally pass function to reduce
+
+# StatsAPI point-estimate predict (interop only, see StatsAPI section below)
+predict(mod, new_data) # posterior-mean epred, plain Vector
 
 # Metrics
 using StatisticalMeasures # to be able to pass metrics, otherwise defaults only
@@ -128,13 +131,22 @@ pp_check_dens_overlay(mod)
 * `outcome_as_distribution(model)` - Response variable as CategoricalDistributions.jl object (Bernoulli only)
 
 ### Predictions
-* `predict(model, X=model.X; type=:posterior, kwargs...)` - Generate predictions (`type` one of `:posterior`, `:epred`, `:linpred`)
-* `predict(f, model, X=model.X; type, kwargs...)` - Reduce draws with `f` first
-* `predict(model, new_data::DataFrame; kwargs...)` - Predict on new data, remaps random-effect levels
+* `posterior_predict(model, X=model.X; type=:posterior, kwargs...)` - Generate full-posterior predictions (`type` one of `:posterior`, `:epred`, `:linpred`) — the package's primary predict API
+* `posterior_predict(f, model, X=model.X; type, kwargs...)` - Reduce draws with `f` first
+* `posterior_predict(model, new_data::DataFrame; kwargs...)` - Predict on new data, remaps random-effect levels
 
 ### Model Comparison
 * `psis_loo(model; kwargs...)` - Leave-one-out cross-validation via Pareto-smoothed importance sampling (`PosteriorStats.loo`). `kwargs...` forwarded to `PosteriorStats.loo`.
 * `loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)` / `loo_compare(models::TuringRegression...; kwargs...)` - Compare fitted models by ELPD (`PosteriorStats.compare`). `kwargs...` forwarded to `PosteriorStats.compare`.
+
+### StatsAPI
+
+`TuringRegression <: StatsAPI.RegressionModel`. Point estimates are posterior-based (e.g. `coef` = posterior mean) and cover fixed effects only.
+
+* `coef`, `coefnames`, `coeftable`, `confint`, `vcov`, `stderror` - Fixed-effect estimates and credible intervals
+* `nobs`, `isfitted`, `weights`, `islinear`, `response`, `responsename`, `meanresponse`, `modelmatrix` - Metadata and data accessors (`modelmatrix` errors on random-effects models, use `predictors(model, :fixef)` instead)
+* `fitted`, `residuals`, `predict` - Point-estimate predictions (posterior-mean `epred`); use `posterior_predict` above for the full posterior
+* MLE-only stats with no Bayesian analogue (`dof`, `aic`/`bic`, `r2`, `leverage`, ...) raise a clear error instead of a number — see `psis_loo`/`loo_compare` for model comparison
 
 ### Utilities
 * `summary(model)` - Formatted summary with diagnostics (rhat, ess, mcse)
@@ -144,7 +156,7 @@ pp_check_dens_overlay(mod)
 * `default_metrics(model)` / `default_metrics(fun, model)` - Default model metrics
 
 ### Plots
-* `lineribbon!()` - Makie recipe for banded intervalsm, used in `conditional_dependency()`
+* `lineribbon!()` - Makie recipe for banded intervals, used in `conditional_dependency()`
 * `conditional_dependency(model, var)` - Show dependency of outcome on one variable
 * `pp_check_hist(model)` as well as `pp_check_dens()` and `pp_check_dens_overlay()` - Posterior predictive checks
 * See also the examples below for more quick plots
@@ -165,7 +177,7 @@ Accepted model families are `Normal`, `TDist`, `Bernoulli`, `Poisson`, and `Nega
 
 ## Thanks
 
-This pacakge was heavily inspired by and uses small snippets of code from TuringJL
+This pacakge was heavily inspired by and uses small snippets of code from TuringGLM
 It also uses the power of [DimensionalData.jl](https://rafaqz.github.io/DimensionalData.jl/stable/) for its outputs.
 
 ## TODO

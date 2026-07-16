@@ -39,7 +39,7 @@ function calculate_metrics(
     threshold=0.5,
     kwargs...,
 )::DimArray where {T}
-    preds = predict(TR; type=:epred, kwargs...)
+    preds = posterior_predict(TR; type=:epred, kwargs...)
     y = outcome(TR)
 
     # Special handling for bernoulli

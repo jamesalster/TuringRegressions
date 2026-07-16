@@ -3,7 +3,7 @@ using Test
 using RDatasets
 using MCMCChains
 using StatsModels
-using StatsBase: mean, std, var
+using StatsBase: mean, std, var, CoefTable
 using Suppressor: @suppress
 using Random
 using GLM: GLM
@@ -69,16 +69,16 @@ try # T11: keep going through sibling testsets on failure, still print benchmark
     quickfit!(mod)
 
     @testset "call forms" begin
-        @test_nowarn predict(mod) # fitted data
-        @test_nowarn predict(mod, mod.X) # matrix
+        @test_nowarn posterior_predict(mod) # fitted data
+        @test_nowarn posterior_predict(mod, mod.X) # matrix
         new_data = mtcars[1:5, :]
-        @test_nowarn predict(mod, new_data) # new DataFrame
+        @test_nowarn posterior_predict(mod, new_data) # new DataFrame
     end
 
     @testset "type variants and link relations (V5, V6)" begin
-        linp = predict(mod; type=:linpred)
-        ep = predict(mod; type=:epred)
-        post = predict(mod; type=:posterior)
+        linp = posterior_predict(mod; type=:linpred)
+        ep = posterior_predict(mod; type=:epred)
+        post = posterior_predict(mod; type=:posterior)
 
         # Identity link (Normal): linpred == epred
         @test isapprox(Array(linp), Array(ep))
@@ -89,8 +89,8 @@ try # T11: keep going through sibling testsets on failure, still print benchmark
     @testset "log-link relation (Poisson)" begin
         mod_count = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
         quickfit!(mod_count)
-        linp = predict(mod_count; type=:linpred)
-        ep = predict(mod_count; type=:epred)
+        linp = posterior_predict(mod_count; type=:linpred)
+        ep = posterior_predict(mod_count; type=:epred)
         @test isapprox(Array(linp), log.(Array(ep)))
     end
 
@@ -98,8 +98,67 @@ try # T11: keep going through sibling testsets on failure, still print benchmark
         new_data = mtcars[3:8, :]
         glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)
         glm_pred = GLM.predict(glm_mod, new_data)
-        tr_pred = Array(predict(mean, mod, new_data; type=:epred))
+        tr_pred = Array(posterior_predict(mean, mod, new_data; type=:epred))
         @test isapprox(glm_pred, tr_pred, atol=1.5)
+    end
+end
+
+@testset "StatsAPI interface (T6)" begin
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod)
+
+    @test coefnames(mod) == ["α", "Cyl", "Disp"]
+    @test length(coef(mod)) == 3
+    @test nobs(mod) == 32
+    @test isfitted(mod) == true
+    @test islinear(mod) == true
+    @test weights(mod) == ones(32)
+    @test responsename(mod) == "MPG"
+    @test meanresponse(mod) == mean(mtcars.MPG)
+    @test size(modelmatrix(mod)) == (32, 2)
+    @test length(stderror(mod)) == 3
+    @test size(vcov(mod)) == (3, 3)
+    @test size(confint(mod)) == (3, 2)
+    @test coeftable(mod) isa CoefTable
+    @test response(mod) == mod.y
+    @test isapprox(residuals(mod), response(mod) .- fitted(mod))
+
+    # predict (StatsAPI point estimate) vs posterior_predict (full posterior, primary API)
+    pt = @test_logs (:warn, r"posterior_predict") predict(mod)
+    @test pt isa Vector{Float64}
+    @test length(pt) == 32
+    @test posterior_predict(mod) isa DimArray
+
+    # modelmatrix is misleading for random-effects models (no Z structure) — should error
+    mod_re = turing_glm(@formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal)
+    quickfit!(mod_re)
+    @test_throws ArgumentError modelmatrix(mod_re)
+    @test length(coef(mod_re)) == 2 # fixef only, still well-defined
+
+    lp = @test_logs (:warn, r"posterior_predict") linearpredictor(mod)
+    @test lp isa Vector{Float64}
+    @test length(lp) == 32
+    @test isapprox(lp, fitted(mod)) # identity link (Normal): linpred == epred (V5)
+
+    @test isnothing(offset(mod))
+
+    # StatsModels-inherited vif/gvif assume an explicit intercept column in modelmatrix,
+    # which ours never has (α fit separately) — overridden to error instead of mislead
+    @test_throws ArgumentError vif(mod)
+    @test_throws ArgumentError gvif(mod)
+
+    # No Bayesian analogue exists for these MLE-only diagnostics — clear error, not a number
+    for fn in (score, informationmatrix, leverage, cooksdistance)
+        @test_throws ArgumentError fn(mod)
+    end
+    @test_throws ArgumentError reconstruct(mod)
+    @test_throws ArgumentError reconstruct!(mod)
+    @test_throws ArgumentError predict!(mod)
+
+    # No single well-defined value on a posterior (dof/aic/bic assume a fixed param count)
+    for fn in (loglikelihood, dof, mss, rss, nulldeviance, nullloglikelihood, aic, aicc, bic, r2, adjr2)
+        @test_throws ArgumentError fn(mod)
     end
 end
 
@@ -265,7 +324,7 @@ end
         # calibrated against N=2000/nchains=4 posterior mean, see benchmark table
         @test isapprox(GLM.coef(glm_mod), est[1:3], atol=0.3)
         @test isapprox(
-            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=1.0
+            GLM.predict(glm_mod), Array(posterior_predict(mean, mod; type=:epred)), atol=1.0
         )
     end
 
@@ -283,7 +342,7 @@ end
 
         @test isapprox(GLM.coef(glm_mod), est[1:3], atol=0.05)
         @test isapprox(
-            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=10.0
+            GLM.predict(glm_mod), Array(posterior_predict(mean, mod; type=:epred)), atol=10.0
         )
     end
 
@@ -303,7 +362,7 @@ end
 
         @test isapprox(GLM.coef(glm_mod), est[1:3], atol=0.1)
         @test isapprox(
-            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=15.0
+            GLM.predict(glm_mod), Array(posterior_predict(mean, mod; type=:epred)), atol=15.0
         )
     end
 
@@ -323,7 +382,7 @@ end
 
         @test isapprox(GLM.coef(glm_mod), est[1:6], atol=0.1)
         @test isapprox(
-            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=0.1
+            GLM.predict(glm_mod), Array(posterior_predict(mean, mod; type=:epred)), atol=0.1
         )
     end
 end
@@ -391,7 +450,7 @@ end
         @test collect(dims(draws(mod, :Subject), :effect)) == [:Days]
 
         # Guards B4: slope-only ranef must not silently drop the real predictor
-        @test_nowarn predict(mod; type=:epred)
+        @test_nowarn posterior_predict(mod; type=:epred)
     end
 end
 
@@ -403,7 +462,7 @@ end
     d = draws(mod)
     @test :Herd ∈ propertynames(d)
     @test :Herd_sd ∈ propertynames(d)
-    ep = predict(mean, mod; type=:epred)
+    ep = posterior_predict(mean, mod; type=:epred)
     @test all(Array(ep) .> 0) # Poisson mean is strictly positive
 end
 

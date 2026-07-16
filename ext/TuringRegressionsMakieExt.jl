@@ -5,7 +5,7 @@ using TuringRegressions
 using Makie
 using Statistics: mean, median, quantile
 import TuringRegressions: lineribbon, lineribbon!, conditional_dependency, pp_check_dens, pp_check_dens_overlay, pp_check_hist
-import TuringRegressions: TuringRegression, predictors, predict
+import TuringRegressions: TuringRegression, predictors, posterior_predict
 
 """
     lineribbon(x, y; widths=[0.66, 0.95], colorscale="Greys", kwargs...)
@@ -100,7 +100,7 @@ function conditional_dependency(
         end
     end
 
-    preds = predict(TR, predgrid; type=type)
+    preds = posterior_predict(TR, predgrid; type=type)
 
     # plot
     fig = Makie.Figure(kwargs...)
@@ -122,7 +122,7 @@ end
 Compare predicted vs observed values using histograms. Kwargs are passed to Makie.Figure().
 """
 function pp_check_hist(TR::TuringRegression; bins=20, type=:posterior, kwargs...)
-    preds = predict(median, TR; type=type)
+    preds = posterior_predict(median, TR; type=type)
     fig = Makie.Figure(kwargs...)
     ax = Makie.Axis(fig[1, 1]; title="Posterior Predictive Check", xlabel="Outcome")
     Makie.hist!(ax, preds; label="Predictions", bins=bins)
@@ -139,7 +139,7 @@ Compare predicted vs observed values using density curves. Kwargs are passed to 
 function pp_check_dens(
     TR::TuringRegression; bandwidth=Makie.automatic, type=:posterior, kwargs...
 )
-    preds = predict(median, TR; type=type)
+    preds = posterior_predict(median, TR; type=type)
     fig = Makie.Figure(kwargs...)
     ax = Makie.Axis(fig[1, 1]; title="Posterior Predictive Check", xlabel="Outcome")
     Makie.density!(ax, preds; bandwidth=bandwidth, label="Predictions")
@@ -154,7 +154,7 @@ end
 Overlay multiple prediction density curves against observed data density. Kwargs are passed to Makie.Figure().
 """
 function pp_check_dens_overlay(TR::TuringRegression; n_draws=100, type=:posterior, kwargs...)
-    preds = predict(TR; n_draws=n_draws, type=type)
+    preds = posterior_predict(TR; n_draws=n_draws, type=type)
     fig = Makie.Figure(kwargs...)
     ax = Makie.Axis(fig[1, 1]; title="Posterior Predictive Check", xlabel="Outcome")
     for i in 1:n_draws

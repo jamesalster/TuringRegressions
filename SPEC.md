@@ -42,11 +42,12 @@ Param extraction (`src/parametermethods.jl`):
 - `predictors(TR, type)` → DimArray of X (name split from old `fixed_effects`).
 - `outcome_as_distribution(TR)` → `UnivariateFinite` (classification metrics interop).
 
-Predict (`src/predict.jl`, real working API):
-- `predict(TR, X=TR.X; type=:posterior, kwargs...)` / `predict(f::Function, TR, X=TR.X; type, kwargs...)`
-- `predict(TR, new_data::DataFrame, ...)` rebuilds X from formula, remaps random-effect levels (`new_random_effects`, `allow_new_levels` kwarg).
+Predict (`src/predict.jl`, real working API, primary/richest — renamed from `predict` under T6):
+- `posterior_predict(TR, X=TR.X; type=:posterior, kwargs...)` / `posterior_predict(f::Function, TR, X=TR.X; type, kwargs...)`
+- `posterior_predict(TR, new_data::DataFrame, ...)` rebuilds X from formula, remaps random-effect levels (`new_random_effects`, `allow_new_levels` kwarg).
 - `type ∈ (:posterior, :epred, :linpred)`.
 - Internal: `linpred` (Xβ+α [+Zu]), `epred` (invlink∘linpred), `posterior_pred` (adds family noise).
+- `predict(TR, X=TR.X; kwargs...)` (`src/statsapi.jl`, T6): StatsAPI-conformant point estimate (posterior mean `epred`) — interop only, `posterior_predict` is preferred.
 
 Metrics (StatisticalMeasures.jl):
 - `calculate_metrics(TR, metrics::Vector, fun=nothing; threshold=0.5, kwargs...)` epred-based. Bernoulli branch: AUC + pseudo_r2 special-cased, rest categorical.
@@ -63,7 +64,9 @@ Display (`src/summary.jl`, `src/turingregression.jl`):
 - `model_warnings(TR)` — rhat/ess/mcse based `@warn`/`@info`.
 
 Plots (Makie ext, `ext/TuringRegressionsMakieExt.jl`):
-- `lineribbon`/`lineribbon!`, `conditional_dependency`, `pp_check_dens`, `pp_check_dens_overlay`, `pp_check_hist`. Stubs exported from main package, methods added by extension when Makie loaded.
+- `lineribbon`/`lineribbon!`, `conditional_dependency`, `pp_check_dens`, `pp_check_dens_overlay`, `pp_check_hist`. Stubs exported from main package, methods added by extension when Makie loaded. Calls `posterior_predict` internally (renamed under T6 — a rename here is easy to miss since this file lives in `ext/`, not `src/`).
+
+StatsAPI (`src/statsapi.jl`, T6): `TuringRegression <: StatsAPI.RegressionModel`. Point estimates are posterior mean — `coef`/`coeftable`/`fitted`/`residuals`/`linearpredictor`/`predict` `@warn maxlog=1` once each that they collapse the posterior. `vcov`/`confint`/`stderror` use the full posterior (no warning). `modelmatrix`/`vif`/`gvif` error on random-effects models (no way to represent Z structure). No-Bayesian-analogue (`score`, `informationmatrix`, `leverage`, `cooksdistance`, `reconstruct`/`reconstruct!`, `predict!`) and no-single-MLE-value (`loglikelihood`, `dof`, `mss`, `rss`, `nulldeviance`, `nullloglikelihood`, `aic`, `aicc`, `bic`, `r2`, `adjr2`) methods raise `ArgumentError` pointing at `psis_loo`/`loo_compare`. All names imported+re-exported via `@reexport import StatsAPI: ...` in `TuringRegressions.jl` — must be `import` not `using` (StatsAPI marks these `public` not `export`, and `using Mod: f` alone doesn't let you add a method to `f`, only `import Mod: f` does — `using`-only silently defines a fresh unrelated local `f` instead of extending the real generic, which is a `MethodError`-producing footgun, not a load error).
 
 Types:
 - `TuringRegression{T<:Distribution}` — holds formula, X/X_names, y, family, prior, parameters, model info.
@@ -86,7 +89,7 @@ Types:
 - V12. `rhat>1.05` / `ess<100` / `mcse>5%std` → `@warn`; softer thresholds → `@info`.
 - V13. Bernoulli param recovery vs GLM looser tolerance: coef atol 0.05, epred atol 0.05.
 - V14. Weighted fit with `weights ≡ 1` == unweighted fit (params equal within tolerance, SD-normalized comparison — `_weighted_likelihood`'s per-obs `@addlogprob!` loop takes different numeric NUTS path than `_likelihood`'s vectorized logpdf, not bit-identical).
-- V15. `predict(TR, new_data::DataFrame)` uses raw new X, original-scale stored β (no re-standardisation of new X). `epred` on new data ≈ `GLM.predict` on same new data. Guards against re-introducing standardisation in the predict path.
+- V15. `posterior_predict(TR, new_data::DataFrame)` uses raw new X, original-scale stored β (no re-standardisation of new X). `epred` on new data ≈ `GLM.predict` on same new data. Guards against re-introducing standardisation in the predict path.
 - V16. `extract_random_effect` predictor slicing conditions on `has_intercept(term.lhs)` — `(0+x...|g)` (no-intercept ranef terms) sliced differently from intercept-bearing ranef terms. Fixed 2026-07-15, guarded by dedicated tests.
 - V17. Test suite runs via `Pkg.test()`, not direct `julia --project=. test/runtests.jl` — `Pkg.test()`'s isolated temp env is the only one that both (a) resolves deps fresh from `[extras]`/`[compat]` and (b) exercises the package's real symbol table end-to-end. Requires `[compat]` pinned on every Turing-stack package whose version drift can silently break internals (`Turing`, `DynamicPPL`, `FlexiChains`, `MCMCChains` — currently 0.46/0.42/0.6/7), so the temp env's independent resolve can't drift to an incompatible combo.
 - V19. `_generated_quantities` (`src/model.jl`) return tuple always includes a `:loglik` key — per-observation log-likelihood vector, added under T7 for `psis_loo`/`loo_compare`. Computed post-hoc inside `_generated_quantities` rather than via DynamicPPL's normal VarName-based pointwise-loglik tracking, because `model.jl`'s likelihood is written with `Turing.@addlogprob!` (not `y[n] ~ Dist(...)`) — no observed VarNames exist for DynamicPPL to see. Any code calling `generated_quantities(model_with_data, TR.samples)` directly must filter/exclude `:loglik` before treating the returned keys as fitted parameter names — `src/turingregression.jl`'s fixef-layer param loop does this via `filter(!=(:loglik), ...)`.
@@ -124,20 +127,6 @@ T3|.|BIG JOB, merged w/ old T8 (co-dependent — both rewrite `_generated_quanti
 T4|.|BIG JOB: flip prior scaling (depends on T3's centralised affine map). Today user specifies priors on standardised (mean 0, sd 1) scale. Change so priors are given on ORIGINAL data scale — e.g. `Normal(10,20)` on a predictor with mean 10, sd 20 → transformed to `Normal(0,1)` internally for the standardised fit — reported back on original scale in `summary`/`show`/prior display. Use `Distributions.AffineDistribution` (`shift + scale*d`) for the forward transform (prior) and its inverse for the param back-transform — don't hand-write new per-family algebra. Store user's original prior for display; fit on scaled. Re-verify V-invariants under Turing/NUTS with `AffineDistribution` priors|C2,I
 
 T5|.|Re-verify model code-gen (`show_code`, model.jl generated `Expr`) after T3/T4 land, since both touch generated-model internals. FOLD IN: collapse `_likelihood` + `_weighted_likelihood` (currently ~90% duplicated) into one family-dispatched function, with `weights` defaulting to `ones(...)` so unweighted fit is just weighted-fit-with-1s (makes V14 a true structural guarantee, not a coincidence)|C6,V14
-
-T6|.|`TuringRegression` <: StatsAPI `RegressionModel`. Researched 2026-07-16 (StatsAPI `statisticalmodel.jl`/`regressionmodel.jl` read in full). New file `src/statsapi.jl` holds all of this (not scattered into existing files).
-
-Three groups:
-
-(a) EASY — implement, point estimate = posterior mean, reuses existing `draws`/`predict`/`outcome` machinery:
-`coefnames` (`:α`+X_names), `coef` (mean fixef), `coeftable`/`confint` (level kwarg), `vcov`/`stderror` (cov of fixef draws), `nobs`, `isfitted`, `weights`, `islinear` (true only Normal+identity link), `fitted`/`response`/`responsename`/`meanresponse`/`modelmatrix`/`residuals`, `linearpredictor`, `offset` (→ `nothing`, unsupported). `vif`/`gvif` (StatsModels-owned generic) likely free once `modelmatrix`+`coefnames` exist — verify, don't assume.
-Every method that collapses the posterior to one number (`coef`, `coeftable`, `fitted`, `residuals`, `linearpredictor`, new `predict` — see below) `@warn maxlog=1` that it's reporting the posterior mean, not a Bayesian summary — full posterior available via `posterior_predict`/`draws`. `vcov`/`confint`/`stderror` use the full posterior (covariance/quantiles, not a mean plug-in) — no warning needed there.
-
-(b) SKIP, error clearly — no MLE exists on a NUTS posterior, concept doesn't map: `score` (grad @ MLE), `informationmatrix` (Fisher info), `leverage`, `cooksdistance` (OLS hat matrix), `reconstruct`/`reconstruct!`, `predict!` (no in-place design).
-
-(c) SKIP, error clearly, pointing to `psis_loo`/`loo_compare` — decided 2026-07-16 after discussion: `loglikelihood`, `dof`, `mss`, `rss`, `nulldeviance`, `nullloglikelihood`, `aic`, `aicc`, `bic`, `r2`, `adjr2`. Reason: no single "the" likelihood on a Bayesian posterior (mean-plug-in vs mean-of-per-draw are both defensible, neither canonical); `nulldeviance`/`nullloglikelihood` need an actual second NUTS fit of an intercept-only model every call (no closed-form null unlike frequentist GLM, since the null model has its own priors/posterior) — plus an unresolved design question of whether a ranef model's "null" keeps grouping structure; `dof` as raw param count badly miscalibrates `aic`/`bic` for hierarchical/ranef models (shrinkage means a ranef level isn't really "1 free param") where this package's value-add concentrates. `psis_loo`'s `p_loo` is the honest effective-dof answer and already exists (T7) at no extra fit cost — steer users there instead of a misleading frequentist-flavored number.
-
-Naming, decided 2026-07-16: extend `StatsAPI.fit!` directly (shapes already match — `fit!(TR; kwargs...)` — zero cost, avoids two unrelated `fit!` generics coexisting badly). Extend `StatsAPI.predict` too, but semantics differ from today's `predict`: StatsAPI convention wants a point vector, ours returns full posterior draws by default. Resolution: **rename current rich draws-returning function `predict` → `posterior_predict`** (same signatures/kwargs, unchanged behaviour); new `predict(TR, [newX])` becomes the StatsAPI-conformant point estimate (mean `epred`), `@warn`ed per (a) above. README states `posterior_predict` is the preferred/primary API — `predict` exists for StatsAPI interop only. Breaking rename — update all internal call sites (`predict.jl`, `metrics.jl`, tests, docs) from `predict`(rich) → `posterior_predict`.
 
 T13|.|**PARKED 2026-07-16 — bigger than expected, needs its own PR.** First `using TuringRegressions` / first `Pkg.test()` pays full TTFX (Turing/DynamicPPL/model-macro compile). Add a `PrecompileTools.@compile_workload` block (small `turing_glm` fit, `N`/`nchains` minimal) in `src/TuringRegressions.jl` to precompile the hot path ahead of time, cutting first-run latency. **Separate, bigger latency source found during T9 (2026-07-16)**: `construct_model` (model.jl:433) `gensym`s a brand-new model type on *every* `turing_glm()` call. Measured on sleepstudy correlated ranef: 1st `fit!` (compile+sample) 38.1s vs 2nd `fit!` on the *same* compiled type (sample only) 13.1s — ~25s of every single fit is recompilation, not sampling, and repeat fits of the same formula/family/priors/ranef shape never get to reuse it. `PrecompileTools` can't help since the gensym'd type doesn't exist until runtime.
 

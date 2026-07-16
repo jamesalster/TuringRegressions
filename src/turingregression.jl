@@ -24,7 +24,7 @@ Stores the formula, data, priors, and MCMC samples. The type parameter
 - `samples`: MCMC chains (nothing until `fit!` is called)
 - `parameters`: Standardized parameter draws
 """
-mutable struct TuringRegression{T<:Distribution}
+mutable struct TuringRegression{T<:Distribution} <: RegressionModel
     formula::FormulaTerm
     model::Function
     prior::RegressionPrior
@@ -74,7 +74,7 @@ function turing_glm(formula::FormulaTerm,
     end
 
     # Get data arrays. `schema_formula` is `formula` with schema/contrasts baked in —
-    # stored on TR and reused by predict(TR, new_data::DataFrame) so grouping levels /
+    # stored on TR and reused by posterior_predict(TR, new_data::DataFrame) so grouping levels /
     # categorical contrasts are never re-derived from (possibly small/partial) new data.
     y, X, Z, formula_with_schema = extract_model_data(formula, data)
 

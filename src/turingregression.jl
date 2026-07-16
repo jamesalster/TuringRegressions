@@ -256,11 +256,15 @@ function fit!(
         model_with_data = TR.model(TR.y, TR.X)
     end
 
-    # Sample
+    # Sample. chain_type forced to MCMCChains.Chains: newer Turing defaults to
+    # FlexiChains.FlexiChain, whose internals (._data/._metadata/._structures) are
+    # incompatible with every .samples access site elsewhere in this package
+    # (name_map, indexing, etc). Forcing Chains keeps the rest of the package working
+    # without a rewrite.
     if quiet
-        TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; kwargs...)
+        TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; chain_type=MCMCChains.Chains, kwargs...)
     else
-        TR.samples = sample(model_with_data, sampler, parallel, N, nchains; kwargs...)
+        TR.samples = sample(model_with_data, sampler, parallel, N, nchains; chain_type=MCMCChains.Chains, kwargs...)
     end
 
     # Recover standardised parameters from generated quantities, thanks to claude

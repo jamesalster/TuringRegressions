@@ -2,4 +2,6 @@
 Manifest.toml
 .Rproj.user
 *.Rproj
-.vscode/*
+.vscode/
+.tokensave
+.claude

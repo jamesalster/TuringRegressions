@@ -16,6 +16,7 @@ using Random
 using StatisticalMeasures
 #using ParetoSmooth #Broken becayse we need more modern DynamicPPL
 using MCMCDiagnosticTools
+using MCMCChains: MCMCChains, summarize, Chains
 
 using MacroTools: prettify
 using Suppressor: @suppress

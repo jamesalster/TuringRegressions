@@ -2,7 +2,6 @@ using TuringRegressions
 using Test
 using RDatasets
 using MCMCChains
-using ParetoSmooth
 using StatsModels
 using StatsBase: mean, std, var
 using Suppressor: @suppress
@@ -16,6 +15,11 @@ CairoMakie.activate!()
 using PrettyTables
 
 Random.seed!(1)
+
+# Full-sampling-budget calls read these so the benchmark can be re-run at
+# production settings (N=2000, nchains=4) via env vars, without editing tests.
+const BENCH_N = parse(Int, get(ENV, "TR_BENCH_N", "300"))
+const BENCH_NCHAINS = parse(Int, get(ENV, "TR_BENCH_NCHAINS", "2"))
 
 @info "Setting up tests"
 
@@ -38,7 +42,7 @@ cbpp = dataset("lme4", "cbpp")
 quickfit!(TR) = @suppress fit!(TR; N=300, nchains=2, quiet=true)
 
 # Benchmark table: posterior mean vs canonical (GLM MLE / lme4 REML), full-budget
-# models only (N=2000, nchains=4). Printed at the end of the run — a running record
+# models only (N=BENCH_N, nchains=BENCH_NCHAINS). Printed at the end of the run — a running record
 # of how tight our tolerances actually are, not just whether they pass.
 const BENCHMARK_ROWS = NamedTuple[]
 
@@ -60,7 +64,7 @@ end
     @testset "Normal" begin
         Random.seed!(123)
         mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
-        @suppress fit!(mod; N=2000, nchains=4, quiet=true)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)
         est = Array(draws(mean, mod, :fixef))
@@ -79,7 +83,7 @@ end
     @testset "Poisson" begin
         Random.seed!(123)
         mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
-        @suppress fit!(mod; N=2000, nchains=4, quiet=true)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink())
         est = Array(draws(mean, mod, :fixef))
@@ -97,7 +101,7 @@ end
     @testset "NegativeBinomial" begin
         Random.seed!(123)
         mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial)
-        @suppress fit!(mod; N=2000, nchains=4, quiet=true)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.glm(
             @formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink()
@@ -117,7 +121,7 @@ end
     @testset "Bernoulli" begin
         Random.seed!(123)
         mod = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic, Bernoulli)
-        @suppress fit!(mod; N=2000, nchains=4, quiet=true)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.glm(
             @formula(Survived ~ Class + Sex + Age), titanic, Binomial(), GLM.LogitLink()
@@ -141,7 +145,7 @@ end
         mod = turing_glm(
             @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal
         )
-        @suppress fit!(mod; N=2000, nchains=4, quiet=true)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         d = draws(mod)
         @test :fixef ∈ propertynames(d)
@@ -318,23 +322,8 @@ end
     @test_throws ArgumentError outcome_as_distribution(mod)
 end
 
-@testset "Model Comparison" begin
-    Random.seed!(123)
-    mod1 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
-    quickfit!(mod1)
-    mod2 = turing_glm(@formula(MPG ~ Cyl), mtcars, Normal)
-    quickfit!(mod2)
-
-    @test psis_loo(mod1) isa ParetoSmooth.PsisLoo
-
-    comp1 = loo_compare(mod1, mod2)
-    @test comp1 isa ParetoSmooth.ModelComparison
-    comp2 = loo_compare([mod1, mod2])
-    @test sprint(show, comp1) == sprint(show, comp2)
-
-    comp3 = loo_compare(mod1, mod2; model_names=("Full", "Reduced"))
-    @test contains(sprint(show, comp3), "Full")
-end
+# Model Comparison testset disabled: ParetoSmooth removed pending a DynamicPPL-compatible
+# version (psis_loo/loo_compare in src/comparison.jl are commented out of the package too).
 
 @testset "Show/summary output" begin
     Random.seed!(123)
@@ -390,6 +379,6 @@ end
 println()
 println("="^78)
 println("BENCHMARK: posterior mean vs canonical (GLM MLE / lme4 REML)")
-println("Full-sampling-budget models only (N=2000, nchains=4)")
+println("Full-sampling-budget models only (N=BENCH_N, nchains=BENCH_NCHAINS)")
 println("="^78)
 pretty_table(DataFrame(BENCHMARK_ROWS); header=["model", "param", "ours", "canonical", "abs err", "rel err %"])

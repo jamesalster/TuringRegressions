@@ -87,10 +87,16 @@ Types:
 - V14. Weighted fit with `weights ≡ 1` == unweighted fit (params equal within tolerance). Currently ZERO tests exercising `_weighted_likelihood` (model.jl) — add under T1.
 - V15. `predict(TR, new_data::DataFrame)` uses raw new X, original-scale stored β (no re-standardisation of new X). `epred` on new data ≈ `GLM.predict` on same new data. Guards against re-introducing standardisation in the predict path.
 - V16. `extract_random_effect` predictor slicing conditions on `has_intercept(term.lhs)` — `(0+x...|g)` (no-intercept ranef terms) sliced differently from intercept-bearing ranef terms. Fixed 2026-07-15, guarded by dedicated tests.
+- V17. Test suite runs via `Pkg.test()`, not direct `julia --project=. test/runtests.jl` — `Pkg.test()`'s isolated temp env is the only one that both (a) resolves deps fresh from `[extras]`/`[compat]` and (b) exercises the package's real symbol table end-to-end. Requires `[compat]` pinned on every Turing-stack package whose version drift can silently break internals (`Turing`, `DynamicPPL`, `FlexiChains`, `MCMCChains` — currently 0.46/0.42/0.6/7), so the temp env's independent resolve can't drift to an incompatible combo.
+
+## §B BUGS
+
+id|date|cause|fix
+B1|2026-07-16|`src/turingregression.jl` used `MCMCChains.Chains` as a qualifier but `src/TuringRegressions.jl` only did `using MCMCChains: summarize, Chains` — never bound the module name itself, so any `MCMCChains.X` reference was always an `UndefVarError`, in every env. Masked because direct-script test runs never got far enough to hit `fit!` (GLM missing from load path via legacy `[extras]`/`[targets]`, only visible to `Pkg.test()`) — only surfaced once `Pkg.test()` actually ran.|`using MCMCChains: MCMCChains, summarize, Chains`; V17
 
 ## §T TASKS
 
-T1|.|Confirm full new test suite passes AND benchmarks fit well|V2,V14,I.plots
+T1|~|Two-pass test run: (1) all fits incl benchmark ones cheap (`BENCH_N`/`BENCH_NCHAINS` env-driven, default 300/2) — suite must run error-free, accuracy asserts may fail; (2) re-up benchmark fits to N=2000, nchains via `TR_BENCH_NCHAINS` env override maxed to `Threads.nthreads()` (was fixed 4, too slow) — fix only small/obvious benchmark-tolerance misses, no rebuild|V2,V14,I.plots
 
 T2|.|README rewrite — API surface has drifted (old `fixef`/`parameters`/`get_parameters` references, TuringGLM mentions). Bring in line with current `draws`/`predict`/`summary` interface|I
 
@@ -101,6 +107,12 @@ T4|.|BIG JOB: flip prior scaling (depends on T3's centralised affine map). Today
 T5|.|Re-verify model code-gen (`show_code`, model.jl generated `Expr`) after T3/T4 land, since both touch generated-model internals. FOLD IN: collapse `_likelihood` + `_weighted_likelihood` (currently ~90% duplicated) into one family-dispatched function, with `weights` defaulting to `ones(...)` so unweighted fit is just weighted-fit-with-1s (makes V14 a true structural guarantee, not a coincidence)|C6,V14
 
 T6|.|BIG JOB: `TuringRegression` as StatsAPI/StatsBase `RegressionModel`. Posterior-based methods where a point-estimate API expects one; skip/error clearly where no sane mapping exists (e.g. `StatsModels.TableRegressionModel`-only methods). Add formula-schema tests|I
+
+T7|.|Swap `src/comparison.jl` off ParetoSmooth (broken, already stripped from Project.toml) onto PSIS.jl + PosteriorStats.jl. `psis_loo` → PSIS.jl `psis` on reshaped loglik array; `loo_compare` → PosteriorStats.jl `compare`/`loo` API. Re-check return-type shape/fields callers rely on (`elpd`, etc), update tests|C7
+
+T8|.|Investigate: drop MCMCChains for FlexiChains in param extraction/`summary`. Currently `fit!` forces `chain_type=MCMCChains.Chains` (Turing 0.46 default is `FlexiChains.FlexiChain`) purely to keep every `.samples` access site (`name_map`, indexing) working w/o rewrite. Check whether native FlexiChains gives cleaner/faster param extraction (parametermethods.jl `draws`) + `summary`/`show` — its `._data`/`._metadata`/`._structures` layout may map onto `DimStack` output more directly than MCMCChains' AxisArray does. Scope: survey FlexiChains API, prototype one extraction path, compare against current before committing to a rewrite|C1,I
+
+T9|.|Investigate: full-budget NUTS on sleepstudy RE model (`Reaction ~ 1 + Days + (1+Days\|Subject)`, N=2000, nchains maxed to `Threads.nthreads()`) much slower than equivalent brms/rstan fit, same model/data. Check before trusting T1 pass-2 timing as acceptable: (a) centered vs non-centered ranef parameterisation in generated `Expr` — centered is the classic NUTS-slow culprit for hierarchical models, (b) redundant recomputation in generated model code, (c) AD backend choice, (d) whether `MCMCThreads` actually parallelises across available threads on this machine. Don't treat T1 pass-2 as done if slowness is masking a perf bug rather than genuine sampling cost|T1,C6
 
 ## §NOTE
 

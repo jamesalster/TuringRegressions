@@ -33,6 +33,7 @@ fit!(mod, N=1000, nchains=2)
 
 # View results
 summary(mod)
+summary(mod; show_metrics=true) # Just taken from posterior draws
 
 # Get coefficients
 fixed_effects = draws(mod, :fixef) # With uncertainty

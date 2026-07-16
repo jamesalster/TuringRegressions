@@ -19,10 +19,10 @@ end
 # StatsAPI methods only ever describe the fixed-effects design (like MixedModels.jl's
 # `modelmatrix`/`coef`) — but unlike `coef`/`fitted`/`residuals`, which stay correct by
 # routing through `posterior_predict` (which already folds in random effects via TR.z),
-# `modelmatrix` has no way to represent the Z structure at all. Returning just TR.X would
+# `modelmatrix` has no way to represent the Z structure at all. Returning just TR.modeldata.predictors.X would
 # silently look like the whole design; error instead of misleading the caller.
 function _error_if_random_effects(TR::TuringRegression, fn::Symbol)
-    TR.modelinfo.has_random_effects && throw(ArgumentError(
+    has_random_effects(TR) && throw(ArgumentError(
         "$fn(TR) is not meaningful for a model with random effects — it can only " *
         "describe the fixed-effects design, not the grouping/Z structure. Use " *
         "`predictors(TR, :fixef)` for the fixed-effects matrix alone.",
@@ -35,8 +35,8 @@ end
 # (if present), then predictors. Excludes auxiliary params (σ, ν, ϕ).
 function coefnames(TR::TuringRegression)
     names = String[]
-    TR.modelinfo.has_intercept && push!(names, "α")
-    TR.modelinfo.has_fixed_effects && append!(names, TR.X_names)
+    has_intercept(TR) && push!(names, "α")
+    has_fixed_effects(TR) && append!(names, TR.modeldata.predictors.X_names)
     return names
 end
 
@@ -103,19 +103,19 @@ function confint(TR::TuringRegression; level::Real=0.95)
     return hcat(lower, upper)
 end
 
-nobs(TR::TuringRegression) = size(TR.X, 1)
+nobs(TR::TuringRegression) = size(TR.modeldata.predictors.X, 1)
 isfitted(TR::TuringRegression) = !isnothing(TR.samples)
-weights(TR::TuringRegression) = isnothing(TR.weights) ? ones(nobs(TR)) : TR.weights
+weights(TR::TuringRegression) = isnothing(TR.modeldata.weights) ? ones(nobs(TR)) : TR.modeldata.weights
 islinear(TR::TuringRegression{T}) where {T} = T == Normal && TR.link == identity
 offset(::TuringRegression) = nothing # no offset-term support
 
-response(TR::TuringRegression) = TR.y
+response(TR::TuringRegression) = TR.modeldata.y
 responsename(TR::TuringRegression) = string(TR.formula.lhs)
-meanresponse(TR::TuringRegression) = mean(TR.y)
+meanresponse(TR::TuringRegression) = mean(TR.modeldata.y)
 
 function modelmatrix(TR::TuringRegression)
     _error_if_random_effects(TR, :modelmatrix)
-    return TR.X
+    return TR.modeldata.predictors.X
 end
 
 # Shared by `predict`/`fitted`/`residuals`/`linearpredictor` — the point-estimate compute.
@@ -129,20 +129,20 @@ Posterior mean of the fitted values on the response scale (mean `epred`).
 """
 function fitted(TR::TuringRegression)
     _posterior_mean_warning(:fitted)
-    return _point_pred(TR, TR.X; type=:epred)
+    return _point_pred(TR, TR.modeldata.predictors.X; type=:epred)
 end
 
 function residuals(TR::TuringRegression)
     _posterior_mean_warning(:residuals)
-    return response(TR) .- _point_pred(TR, TR.X; type=:epred)
+    return response(TR) .- _point_pred(TR, TR.modeldata.predictors.X; type=:epred)
 end
 
 """
-    linearpredictor(TR::TuringRegression, X=TR.X; kwargs...)
+    linearpredictor(TR::TuringRegression, X=TR.modeldata.predictors.X; kwargs...)
 
 Posterior mean of the linear predictor `Xβ + α [+ Zu]` (mean `linpred`).
 """
-function linearpredictor(TR::TuringRegression, X=TR.X; kwargs...)
+function linearpredictor(TR::TuringRegression, X=TR.modeldata.predictors.X; kwargs...)
     _posterior_mean_warning(:linearpredictor)
     return _point_pred(TR, X; type=:linpred, kwargs...)
 end
@@ -154,7 +154,7 @@ StatsAPI-conformant point estimate (posterior mean `epred`), for interop with co
 expecting a single point-prediction vector. For the full posterior (the package's
 primary, richer API), use `posterior_predict`.
 """
-function predict(TR::TuringRegression, X=TR.X; kwargs...)
+function predict(TR::TuringRegression, X=TR.modeldata.predictors.X; kwargs...)
     _posterior_mean_warning(:predict)
     return _point_pred(TR, X; type=:epred, kwargs...)
 end

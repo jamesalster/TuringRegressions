@@ -65,7 +65,7 @@ end
 Get the response variable as DimArray.
 """
 function outcome(TR::TuringRegression)
-    return DimArray(TR.y, (Dim{:row}))
+    return DimArray(TR.modeldata.y, (Dim{:row}))
 end
 
 """
@@ -75,7 +75,7 @@ Get the predictor matrix variable as DimArray. `type` can be `:fixef` or `:ranef
 """
 function predictors(TR::TuringRegression, type::Symbol)
     if type === :fixef
-        return DimArray(TR.X, (Dim{:row}, Dim{:var}([TR.X_names...])))
+        return DimArray(TR.modeldata.predictors.X, (Dim{:row}, Dim{:var}([TR.modeldata.predictors.X_names...])))
     elseif type === :ranef
         error("Not implemented")
     end
@@ -97,5 +97,5 @@ function outcome_as_distribution(TR::TuringRegression{T}) where {T}
             ),
         )
     end
-    return Distributions.fit(UnivariateFinite, categorical(TR.y .== 1))
+    return Distributions.fit(UnivariateFinite, categorical(TR.modeldata.y .== 1))
 end

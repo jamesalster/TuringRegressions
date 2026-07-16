@@ -1,17 +1,4 @@
 """
-Flags describing model structure.
-
-Tracks which components are present: intercept, fixed effects, 
-random effects, and whether sampling weights are used.
-"""
-struct ModelInfo
-    has_intercept::Bool
-    has_fixed_effects::Bool
-    has_random_effects::Bool
-    weighted::Bool
-end
-
-"""
 A Bayesian regression model fitted with Turing.jl.
 
 Stores the formula, data, priors, and MCMC samples. The type parameter 
@@ -29,16 +16,17 @@ mutable struct TuringRegression{T<:Distribution} <: RegressionModel
     model::Function
     prior::RegressionPrior
     link::Function
-    y::AbstractVector
-    X::AbstractMatrix
-    z::Union{Nothing,Vector{RandomEffect}}
-    weights::Union{Nothing,Vector{Float64}}
-    X_names::Union{Nothing,Vector{String}}
-    modelinfo::ModelInfo
+    modeldata::ModelData
     modelcode::Expr
     samples::Union{Nothing,Chains}
     parameters::Union{Nothing,DimStack}
 end
+
+# Derived flags — mirror the ModelData accessors (formula_handlers.jl) for the fitted TR.
+has_intercept(TR::TuringRegression) = has_intercept(TR.modeldata)
+has_fixed_effects(TR::TuringRegression) = has_fixed_effects(TR.modeldata)
+has_random_effects(TR::TuringRegression) = has_random_effects(TR.modeldata)
+is_weighted(TR::TuringRegression) = is_weighted(TR.modeldata)
 
 """
     turing_glm(formula, data, family; priors, weights, show_code)
@@ -73,32 +61,19 @@ function turing_glm(formula::FormulaTerm,
         error("Family: $(string(family)) not supported.")
     end
 
-    # Get data arrays. `schema_formula` is `formula` with schema/contrasts baked in —
+    # Get data arrays. `modeldata.f` is `formula` with schema/contrasts baked in —
     # stored on TR and reused by posterior_predict(TR, new_data::DataFrame) so grouping levels /
     # categorical contrasts are never re-derived from (possibly small/partial) new data.
-    y, X, Z, formula_with_schema = extract_model_data(formula, data)
+    modeldata = extract_model_data(formula, data, weights)
 
-    # Make model info
-    model_info = ModelInfo(
-        has_intercept(formula),
-        size(X, 2) > 0,
-        !isnothing(Z),
-        !isnothing(weights)
-    )
-
-    model_obj, model_code = cached_construct_model(family, model_info, Z, priors, show_code)
+    model_obj, model_code = cached_construct_model(family, modeldata, priors, show_code)
 
     return TuringRegression{family}(
-        formula_with_schema,
+        modeldata.f,
         model_obj,
         priors,
         get_link(family),
-        y,
-        X,
-        Z,
-        weights,
-        get_fixef_names(formula, data),
-        model_info,
+        modeldata,
         model_code,
         nothing,
         nothing
@@ -166,7 +141,7 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
     println(io, normal_style, clean_prior_string(string(pr.intercept)))
     print(io, normal_style, "  Fixed Effects: ")
     println(io, normal_style, clean_prior_string(string(pr.fixed_effects)))
-    if TR.modelinfo.has_random_effects
+    if has_random_effects(TR)
         print(io, normal_style, "  Random Effects: ")
         println(io, normal_style, clean_prior_string(string(pr.random_effects)))
     end
@@ -186,7 +161,7 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
 
     # Observations
     print(io, label_style, "Observations: ")
-    println(io, normal_style, size(TR.X, 1))
+    println(io, normal_style, size(TR.modeldata.predictors.X, 1))
 
     # Samples
     print(io, label_style, "Samples: ")
@@ -207,38 +182,6 @@ end
 #### Methods ####
 
 """
-    _build_model_with_data(TR::TuringRegression)
-
-Build the DynamicPPL model conditioned on TR's data (y, X, random-effect
-grouping structures, weights as applicable). Return the conditioned model.
-"""
-function _build_model_with_data(TR::TuringRegression)
-    # Prepare random effect data structures
-    if TR.modelinfo.has_random_effects
-        n_gr = zeros(Int, length(TR.z))
-        group_idx = zeros(Int, size(first(TR.z).predictors, 1), length(TR.z))
-        group_predictors = Vector{Matrix{Float64}}(undef, length(TR.z))
-
-        for (i, ranef) in enumerate(TR.z)
-            n_gr[i] = length(ranef.levels)
-            group_idx[:,i] = ranef.level_index
-            group_predictors[i] = ranef.predictors #this is an empty matrix if no fixed effects for the ranef
-        end
-    end
-
-    # Call model function
-    if TR.modelinfo.has_random_effects & TR.modelinfo.weighted
-        return TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors, TR.weights)
-    elseif TR.modelinfo.has_random_effects
-        return TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors)
-    elseif TR.modelinfo.weighted
-        return TR.model(TR.y, TR.X, TR.weights)
-    else
-        return TR.model(TR.y, TR.X)
-    end
-end
-
-"""
     fit!(TR::TuringRegression; sampler, parallel, N, nchains, quiet, kwargs...)
 
 Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passed to Turing's `sample()`.
@@ -255,6 +198,19 @@ Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passe
 fit!(model, N=1000, nchains=2)
 ```
 """
+# Slim helper (§5.3): derives the grouping arrays (n_groups/group_idx/group_predictors)
+# from ModelData.Z once, then calls the model with its unpacked-argument signature.
+# Shared with psis_loo (comparison.jl), which needs the same conditioned model.
+function _build_model_with_data(TR::TuringRegression)
+    md = TR.modeldata
+    Z = md.Z
+    n_groups = [length(re.levels) for re in Z]
+    group_idx = isempty(Z) ? Matrix{Int}(undef, length(md.y), 0) : reduce(hcat, (re.level_index for re in Z))
+    group_predictors = [re.predictors.X for re in Z]
+    weights = something(md.weights, ones(length(md.y)))
+    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights)
+end
+
 function fit!(
     TR::TuringRegression;
     sampler=NUTS(),
@@ -296,7 +252,7 @@ function fit!(
         if param === :β
             arr = stack(param_dict[param])
             push!(fixef_arrays, arr)
-            append!(fixef_labels, Symbol.(TR.X_names))
+            append!(fixef_labels, Symbol.(TR.modeldata.predictors.X_names))
         else
             push!(fixef_arrays, reshape(param_dict[param], 1, size(param_dict[param])...))
             push!(fixef_labels, param)
@@ -307,7 +263,7 @@ function fit!(
     layers = Dict{Symbol,Any}(:fixef => fixef_arr)
 
     # One layer per random-effect grouping term
-    for re in (TR.modelinfo.has_random_effects ? TR.z : RandomEffect[])
+    for re in TR.modeldata.Z
         group = re.variable
         intercept_sym = Symbol("α_z_", group)
         beta_sym = Symbol("β_z_", group)
@@ -316,17 +272,17 @@ function fit!(
         offset_sym = Symbol("offset_z_", group)
 
         effect_names = Symbol[]
-        re.has_intercept && push!(effect_names, :Intercept)
-        re.has_fixed_effects && append!(effect_names, Symbol.(re.predictor_names))
+        re.predictors.has_intercept && push!(effect_names, :Intercept)
+        re.predictors.has_fixed_effects && append!(effect_names, Symbol.(re.predictors.X_names))
 
         # Main layer: (effect, group, draw, chain)
-        if re.has_intercept & re.has_fixed_effects
+        if re.predictors.has_intercept & re.predictors.has_fixed_effects
             combined = [vcat(reshape(param_dict[intercept_sym][i, j], 1, :), param_dict[beta_sym][i, j])
                         for i in axes(gq, 1), j in axes(gq, 2)]
             main_arr = stack(combined)
-        elseif re.has_fixed_effects
+        elseif re.predictors.has_fixed_effects
             main_arr = stack(param_dict[beta_sym])
-        else # re.has_intercept only
+        else # re.predictors.has_intercept only
             combined = [reshape(param_dict[intercept_sym][i, j], 1, :) for i in axes(gq, 1), j in axes(gq, 2)]
             main_arr = stack(combined)
         end

@@ -171,9 +171,11 @@ predict(TR, new_data)
 
 ## §4 THE STRUCTS
 
-Committed already (`scaling_refactor`):
+Committed already (`scaling_refactor`), renamed `LinearModelData`→`Predictors` /
+field `linearmodeldata`→`predictors` (2026-07-16, ranef predictors are predictors
+too so the fixef-flavoured name didn't fit):
 ```julia
-struct LinearModelData          # reused for fixef AND each ranef
+struct Predictors                # reused for fixef AND each ranef
     has_intercept::Bool
     has_fixed_effects::Bool
     X::AbstractMatrix
@@ -181,17 +183,20 @@ struct LinearModelData          # reused for fixef AND each ranef
 end
 struct RandomEffect
     variable::Symbol; levels::Vector; level_index::Vector{Int}
-    linearmodeldata::LinearModelData
+    predictors::Predictors
 end
 struct ModelData
     f::FormulaTerm; y::AbstractVector
-    linearmodeldata::LinearModelData      # fixef
+    predictors::Predictors                # fixef
     Z::Vector{RandomEffect}               # empty ⇒ no ranef
     weights::Union{Nothing,Vector{Float64}}
 end
 ```
-`ModelInfo` is DELETED — its 4 bools now derive: intercept/fixef from
-`linearmodeldata`, ranef from `!isempty(Z)`, weighted from `!isnothing(weights)`.
+`ModelInfo` is DELETED — its 4 bools now derive via multiple-dispatch accessors in
+`formula_handlers.jl`: `has_intercept(md)`/`has_fixed_effects(md)` from `md.predictors`,
+`has_random_effects(md) = !isempty(md.Z)`, `is_weighted(md) = !isnothing(md.weights)`.
+Same 4 accessors overloaded for `TuringRegression` (`turingregression.jl`) so call
+sites don't care whether they hold a `ModelData` or a fitted `TR`.
 
 NEW — the affine companion (mirrors ModelData's shape so ops broadcast cleanly):
 ```julia
@@ -243,22 +248,45 @@ together, one function, no double rewrite. **Lean: together.**
 back-transform math. Round-trip test `unstandardise∘standardise == id` is the new
 guard. Re-run full NUTS param-recovery vs GLM after move (V5/V13).
 
-## §6 CURRENT WIP STATE (scaling_refactor) — broken spots to resolve
+## §6 CURRENT WIP STATE (scaling_refactor) — RESOLVED 2026-07-16
 
-Structural rename done, half-wired. Before/alongside the refactor, fix:
-- `formula_handlers.jl`: `has_intercept = has_intercept(formula)` shadows the fn
-  (recursion/UndefVar) — rename local.
-- `model.jl` `_random_effects`: `size(ranef..linearmodeldata.X,2)` double-dot typo;
-  `size(ranef.X,2)` → `ranef.linearmodeldata.X`.
-- `model.jl` `_linear_model`: refs `modelinfo.linearmodeldata` but param is
-  `modeldata` — wrong var name throughout.
-- `model.jl` `_pointwise_loglik`: branch inverted (§5.4).
-- `model.jl` `construct_model`: signature stub `(y, X, ngrou)` + TODO → resolve via §5.3.
-- `turing_glm`: still refs deleted `model_info`, `Z`; `cached_construct_model` sig
-  needs `(family, md, ...)`.
-- `predict.jl` `_resolve_z`: `TR.modeldata.z`/`TR.modelinfo` → `TR.modeldata.Z` /
-  derive flags; ranef branch reads `re.linearmodeldata`.
-- `fit!`/`psis_loo`: `TR.model(TR.modeldata)` call convention must match §5.3.
+All of §7 steps 1+2 done, package compiles clean (`using TuringRegressions`).
+Fixed, in order:
+- `formula_handlers.jl`: `has_intercept = has_intercept(formula)` local-shadows-fn
+  bug → renamed local to `formula_has_intercept` in `extract_model_data`.
+- `LinearModelData`→`Predictors` rename (see §4) across all files.
+- `model.jl` `_random_effects`/`_linear_model`/`_standardise_data`/
+  `_generated_quantities`: every `ranef.has_intercept`/`.has_fixed_effects`/`.X`
+  → `ranef.predictors.{has_intercept,has_fixed_effects,X}` (double-dot typo +
+  wrong-var-name class of bug, was throughout).
+- `model.jl` `_pointwise_loglik`: signature was `(family, modeldata::ModelData)`
+  but called with a `weighted::Bool` — changed signature to `(family, weighted)`
+  to match call site, and flipped the inverted branch (§5.4 note) since it was
+  already blocking compilation, not just a latent bug.
+- `model.jl` `build_model_body`/`construct_model`: now take `modeldata::ModelData`
+  directly (not `model_info::ModelInfo` + separate `model_ranef`), deriving bools
+  via the §4 accessors. Model signature resolved per §5.3:
+  `(y, X, n_groups, group_idx, group_predictors, weights)`.
+- `model_cache.jl`: `_model_cache_key`/`cached_construct_model` updated to the
+  `ModelData`-based signature; cache key's structural tuple built from the §4
+  accessors instead of the deleted `ModelInfo`.
+- `turingregression.jl`: `turing_glm` constructor was missing the `formula` field
+  entirely (arg-count mismatch) — now passes `modeldata.f`. Added
+  `_build_model_with_data(TR)` (the resurrected slim helper from §5.3) — computes
+  `n_groups`/`group_idx`/`group_predictors` once from `TR.modeldata.Z` and calls
+  `TR.model(...)` with the unpacked signature. `fit!` and `comparison.jl`'s
+  `psis_loo` both call it now instead of the stale `TR.model(TR.modeldata)`.
+- `predict.jl`/`statsapi.jl`/`summary.jl`/`parametermethods.jl`: every stale
+  `TR.X`/`TR.X_names`/`TR.z`/`TR.y`/`TR.weights`/`TR.modelinfo.*` reference
+  rewritten to `TR.modeldata.predictors.*` / `TR.modeldata.Z` / `TR.modeldata.y` /
+  `TR.modeldata.weights` / the §4 accessor functions.
+- `extract_model_data`: `weights` param given a `=nothing` default — predict.jl's
+  `posterior_predict(TR, new_data::DataFrame)` path calls it with 2 args.
+
+**Not yet verified**: no scratch `fit!()` run this session (compiles clean, but
+NUTS run itself untested against this rewrite) — do that before trusting it.
+Round-trip/V-invariant re-verification (§5.6) still pending, comes with T3 (§3
+steps 3-4 below, not started).
 
 ## §7 SEQUENCE (user-ordered)
 

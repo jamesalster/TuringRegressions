@@ -104,8 +104,8 @@ function Base.summary(
         ],
         default_options...,
     )
-    if TR.modelinfo.has_random_effects
-        for re in TR.z
+    if has_random_effects(TR)
+        for re in TR.modeldata.Z
             group = re.variable
 
             level_draws = draws(TR, group; drop_warmup=drop_warmup, collapse=false, kwargs...)

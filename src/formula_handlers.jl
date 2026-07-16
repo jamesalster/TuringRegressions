@@ -1,17 +1,37 @@
 
-#Data structure to hold the random effects part of a model
+#Data structure to hold model information
+
+struct Predictors
+    has_intercept::Bool
+    has_fixed_effects::Bool
+    X::AbstractMatrix
+    X_names::Union{Nothing,Vector{String}} #TODO would love to cut this
+end
 struct RandomEffect
     variable::Symbol           # grouping variable (e.g., :subject)
     levels::Vector            # unique levels
     level_index::Vector{Int} # data coded as integer index into levels
-    predictors::Matrix{Float64} #predictor matrix
-    predictor_names::Vector{String} #names of predictors
-    has_intercept::Bool       # random intercept?
-    has_fixed_effects::Bool # random fixed effects?
+    predictors::Predictors
 end
 
-#### Functions to extract information from the formula 
+struct ModelData
+    f::FormulaTerm
+    y::AbstractVector
+    predictors::Predictors
+    Z::Vector{RandomEffect}
+    weights::Union{Nothing,Vector{Float64}}
+end
 
+# Derived flags — replace the old (deleted) ModelInfo struct. Multiple-dispatch
+# accessors so callers don't need to know whether they hold a ModelData or a TR.
+has_intercept(md::ModelData) = md.predictors.has_intercept
+has_fixed_effects(md::ModelData) = md.predictors.has_fixed_effects
+has_random_effects(md::ModelData) = !isempty(md.Z)
+is_weighted(md::ModelData) = !isnothing(md.weights)
+
+#### Functions to extract information from the formula
+
+## TODO drop for StatsModels.has_intercept? rework somehow
 function has_intercept(formula) # allow implicit intercepts
     rhs = formula.rhs
     rhs = if rhs isa MatrixTerm
@@ -30,6 +50,7 @@ function has_intercept(formula) # allow implicit intercepts
     true  # implicit intercept when no ConstantTerm found
 end
 
+#TODO replace with known statsAPI stuff if we can?
 function get_fixef_names(formula, data)
     coefs = coefnames(ModelFrame(formula, data))
     filter!(x -> !occursin(" | ", x), coefs) # Drop random effects TODO do this properly
@@ -41,8 +62,9 @@ function get_fixef_names(formula, data)
 end
 
 # Get model data out, y, X and Z. Thanks to claude for a bit of help
-function extract_model_data(formula, data)
+function extract_model_data(formula, data, weights=nothing)
     # Apply schema - validates and types everything
+    formula_has_intercept = has_intercept(formula)
     f = apply_schema(formula, schema(formula, data), MixedModel)
     d = columntable(data)
 
@@ -56,11 +78,9 @@ function extract_model_data(formula, data)
 
     if isempty(re_terms)
         X = modelcols(f.rhs, d)
-        X = has_intercept(formula) ? X[:, 2:end] : X
-        Z = nothing
+        Z = RandomEffect[]
     else
         X = MixedModels.modelmatrix(MixedModel(formula, data))
-        X = X[:, 2:end]
         Z = [extract_random_effect(t, d) for t in re_terms]
         vars = [z.variable for z in Z]
         if length(unique(vars)) < length(vars)
@@ -69,17 +89,12 @@ function extract_model_data(formula, data)
         end
     end
 
-    return (y=y, X=X, Z=Z, formula=f)
-end
+    #TODO check this intercept handling is it right?
+    X = formula_has_intercept ? X[:, 2:end] : X
+    X_names = get_fixef_names(formula, data)
 
-# Random Effect Handling Functions
-function _ranef_predictors(term_lhs, d, has_intercept::Bool)
-    cols = modelcols(term_lhs, d)
-    return has_intercept ? cols[:, 2:end] : cols
-end
-function _ranef_predictor_names(term_lhs)
-    predictor_terms = filter(t -> !(t isa ConstantTerm || t isa InterceptTerm), term_lhs.terms)
-    return [string(t) for t in predictor_terms]
+    predictors = Predictors(formula_has_intercept, size(X, 2) > 0, X, X_names)
+    return ModelData(f, y, predictors, Z, weights)
 end
 
 # Get random effect datastructure from formula
@@ -98,14 +113,21 @@ function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
     end
 
     # Check for intercept in column names
-    has_intercept = StatsModels.hasintercept(term.lhs)
+    term_has_intercept = StatsModels.hasintercept(term.lhs)
 
     # Get predictor matrix from LHS using modelcols
-    predictors = _ranef_predictors(term.lhs, d, has_intercept)
-    predictor_names = _ranef_predictor_names(term.lhs)
+    X = let
+        cols = modelcols(term.lhs, d)
+        term_has_intercept ? cols[:, 2:end] : cols
+    end
+    X_names = let
+        predictor_terms = filter(t -> !(t isa ConstantTerm || t isa InterceptTerm), term.lhs.terms)
+        [string(t) for t in predictor_terms]
+    end
 
-    has_fixed_effects = size(predictors, 2) > 0
+    has_fixed_effects = size(X, 2) > 0
 
-    return RandomEffect(variable, levels, level_index, predictors, predictor_names, has_intercept, has_fixed_effects)
+    predictors = Predictors(term_has_intercept, has_fixed_effects, X, X_names)
+
+    return RandomEffect(variable, levels, level_index, predictors)
 end
-

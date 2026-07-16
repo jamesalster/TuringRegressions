@@ -1,137 +1,66 @@
 
 
-# Internal function to get the parameter names of a model
-function _get_parameter_names(TR::TuringRegression)::Vector{Symbol}
-    return lookup(dims(TR.parameters)[1]).data
-end
-
-# Internal function to access parameters from samples object as DimArray
-function _get_parameters(TR::TuringRegression, params::Vector{Symbol})::DimArray
-    isnothing(TR.samples) && throw(ArgumentError("Model has not been fitted."))
-    return TR.parameters[param=At(params)]
-end
-
-## Parameter methods
-"""
-    parameter_names(TR::TuringRegression, params=TR.samples.name_map[:parameters])
-
-Get parameter names with friendly labels replacing generic β indices.
-"""
-function parameter_names(TR::TuringRegression, params=_get_parameter_names(TR))
-    rename_dict = Dict(Symbol("β[$i]") => Symbol(nm) for (i, nm) in enumerate(TR.X_names))
-    return [get(rename_dict, p, p) for p in params]
-end
-
-"""
-    get_parameters(TR::TuringRegression, params::Vector{Symbol}; std=false, drop_warmup=200, n_draws=-1, collapse=true, kwargs...)
-
-Extract specific parameters from fitted model as DimArray.
-
-# Arguments
-- `params`: Vector of parameter symbols to extract
-- `drop_warmup`: Number of warmup samples to drop from each chain
-- `n_draws`: Number of draws to keep (-1 for all post-warmup)
-- `collapse`: Whether to collapse chains into single dimension
-"""
-function get_parameters(
-    TR::TuringRegression, params::Vector{Symbol}; kwargs...
-)::DimArray
-    isnothing(TR.samples) && throw(ArgumentError("Model has not been fitted."))
-    # access parameters
-    arr = _get_parameters(TR, params) 
-    # rename
-    new_names = string.(parameter_names(TR, params)) # string to allow regex lookup
-    arr = set(arr, Dim{:param} => new_names)
-    # Filter draws
-    arr = process_draws(arr; kwargs...)
-    size(arr, 1) == 0 &&
-        @warn "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
+# Utility function for selecting draws and collapsing chains from a samples AxisArray
+function _process_draws(DA::Union{DimArray, DimStack}; drop_warmup::Int=200, n_draws::Int=-1, collapse::Bool=true)
+    # Drop warmup
+    arr = DA[draw=(drop_warmup + 1):size(DA, :draw)]
+    @assert n_draws <= size(arr, :draw) "$n_draws draws is too many from $(size(arr, :draw)) available. Note that n_draws is applied per chain."
+    # Select draws
+    arr = n_draws > 0 ? arr[draw=1:n_draws] : arr
+    # Collapse
+    arr = collapse ? mergedims(arr, (:draw, :chain) => :draw) : arr
+    @assert size(arr, :draw) > 0 "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
     return arr
 end
 
-"""
-    parameters(TR::TuringRegression, fun=nothing; drop_warmup=200, n_draws=-1, collapse=true, dropdims=true, kwargs...)
+# Drop single dimensions where possible from an array
+function _drop_single_dims(DA::Union{DimArray, DimStack})
+    dims_to_drop = findall(==(1), size(DA))
+    return dropdims(DA; dims=Tuple(dims_to_drop))
+end
 
-Get all model parameters.
-
-# Arguments
-- `fun`: Optional function to apply across draws (e.g., mean, median)
-- `drop_warmup`: Number of warmup samples to drop from each chain  
-- `n_draws`: Number of draws to keep (-1 for all post-warmup)
-- `collapse`: Whether to collapse chains into single dimension
-- `dropdims`: Whether to drop singleton dimensions (default: true)
-"""
-function parameters(
-    TR::TuringRegression, fun::Union{Nothing,Function}=nothing; dropdims=true, kwargs...
-)
-    params = get_parameters(TR, _get_parameter_names(TR); kwargs...)
-    params = isnothing(fun) ? params : mapslices(fun, params; dims=2)
-    return dropdims ? drop_single_dims(params) : params
+# Aggregate a draws/chain-dimensioned DimArray with fun over :draw (+:chain if present)
+function _aggregate_draws(f::Function, arr::DimArray; dropdims=true)
+    dims_to_aggregate = hasdim(arr, :chain) ? [:draw, :chain] : [:draw]
+    dimindices = ntuple(i -> dimnum(arr, dims_to_aggregate[i]), length(dims_to_aggregate))
+    out = mapslices(f, arr; dims=dimindices)
+    return dropdims ? _drop_single_dims(out) : out
 end
 
 """
-    fixef(TR::TuringRegression, fun=nothing; drop_warmup=200, n_draws=-1, collapse=true, dropdims=true, kwargs...)
+    draws(TR::TuringRegression, type::Symbol; drop_warmup=200, n_draws=-1, collapse=true)
+    draws(f::Function, TR::TuringRegression, type::Symbol; dropdims=true, drop_warmup=200, n_draws=-1, collapse=true)
+    draws(TR::TuringRegression; drop_warmup=200, n_draws=-1, collapse=true)
 
-Get fixed effect coefficients (β parameters).
+Extract specific draws from fitted model as `DimArray` (or `DimStack` if `type` is not passed).
+Passing a function (e.g. median) aggregates the draws with that function.
 
 # Arguments
-- `fun`: Optional function to apply across draws (e.g., mean, median)
-- `drop_warmup`: Number of warmup samples to drop from each chain
-- `n_draws`: Number of draws to keep (-1 for all post-warmup)  
-- `collapse`: Whether to collapse chains into single dimension
-- `dropdims`: Whether to drop singleton dimensions (default: true)
+- `type`: Symbol for the type of draw. Can be `:fixef`, :`{ranef_name}`, :{ranef_name}_sd`, `:{group_name}_corr`, `:internals`
+- `drop_warmup`: Number of warmup samples to drop from each chain. (default is `200`)
+- `n_draws`: Number of draws to keep (default is -1 for all post-warmup)
+- `collapse`: Whether to collapse chains into single dimension (default is `true`)
+- `dropdims`: Whether to drop dims over which (default is `true`)
 """
-function fixef(
-    TR::TuringRegression, fun::Union{Nothing,Function}=nothing; dropdims=true, kwargs...
-)
-    fixef_names = [:α, [Symbol("β[$i]") for i in 1:size(TR.X, 2)]...]
-    params = get_parameters(TR, fixef_names; kwargs...)
-    params = isnothing(fun) ? params : mapslices(fun, params; dims=2)
-    return dropdims ? drop_single_dims(params) : params
+function draws(TR::TuringRegression; kwargs...)
+    isnothing(TR.samples) && throw(ArgumentError("Model has not been fitted."))
+    arr = _process_draws(TR.parameters; kwargs...)
+    return arr
+end
+function draws(TR::TuringRegression, type::Symbol; kwargs...)
+    isnothing(TR.samples) && throw(ArgumentError("Model has not been fitted."))
+    available_types = propertynames(TR.parameters)
+    type ∉ available_types && throw(ArgumentError("type $type not available, must be one of: $available_types"))
+    arr = _process_draws(TR.parameters[type]; kwargs...)
+    return arr
+end
+function draws(f::Function, TR::TuringRegression, type::Symbol; dropdims=true, kwargs...)
+    arr = draws(TR, type; kwargs...)
+    return _aggregate_draws(f, arr; dropdims)
 end
 
 """
-    internals(TR::TuringRegression, fun=nothing; drop_warmup=200, n_draws=-1, collapse=true, dropdims=true, kwargs...)
-
-Get internal parameters (auxiliary parameters like σ, ν, etc).
-
-# Arguments
-- `fun`: Optional function to apply across draws (e.g., mean, median)
-- `drop_warmup`: Number of warmup samples to drop from each chain
-- `n_draws`: Number of draws to keep (-1 for all post-warmup)
-- `collapse`: Whether to collapse chains into single dimension
-- `dropdims`: Whether to drop singleton dimensions (default: true)
-"""
-function internals(
-    TR::TuringRegression, fun::Union{Nothing,Function}=nothing; dropdims=true, kwargs...
-)
-    #NB different source for these
-    internals_names = TR.samples.name_map[:internals]
-    arr = DimArray(permutedims(TR.samples[internals_names].value, (2, 1, 3)), 
-        (Dim{:param}(internals_names), Dim{:draw}, Dim{:chain}))
-    # Filter draws
-    arr = process_draws(arr; kwargs...)
-    size(arr, 1) == 0 &&
-        @warn "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
-    params = isnothing(fun) ? arr : mapslices(fun, arr; dims=2)
-    return dropdims ? drop_single_dims(params) : params
-end
-
-"""
-    coefs(TR::TuringRegression, fun=median)
-
-Get coefficient point estimates using specified summary function.
-
-# Arguments
-- `fun`: Summary function to apply (default: median)
-"""
-function coef(TR::TuringRegression, fun::Function=median; kwargs...)
-    @info "Reducing with function: $(fun)"
-    return fixef(TR, fun; kwargs...)
-end
-
-"""
-    outcome(TR::TuringRegression; std=false)
+    outcome(TR::TuringRegression)
 
 Get the response variable as DimArray.
 """
@@ -140,13 +69,19 @@ function outcome(TR::TuringRegression)
 end
 
 """
-    predictors(TR::TuringRegression; std=false)
+    predictors(TR::TuringRegression, type::Symbol)
 
-Get the predictor matrix variable as DimArray.
+Get the predictor matrix variable as DimArray. `type` can be `:fixef` or `:ranef`
 """
-function fixed_effects(TR::TuringRegression)
-    return DimArray(TR.X, (Dim{:row}, Dim{:var}([TR.X_names...])))
+function predictors(TR::TuringRegression, type::Symbol)
+    if type === :fixef
+        return DimArray(TR.X, (Dim{:row}, Dim{:var}([TR.X_names...])))
+    elseif type === :ranef
+        error("Not implemented")
+    end
+    #TODO add random_effecs version of that
 end
+
 
 """
     outcome_as_distribution(TR::TuringRegression{Bernoulli})

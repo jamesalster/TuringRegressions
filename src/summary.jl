@@ -1,19 +1,55 @@
 
+# Compute point-estimate/quantile/diagnostic columns for each label along a (label, draw, chain)
+# DimArray. Used for both the :fixef table and each grouping term's SD table.
+function _diagnostics_table(arr, labels, funs, func_names_all, quantiles)
+    n = length(labels)
+    stat_vectors = [Vector{Float64}(undef, n) for _ in func_names_all]
+    mcse_vec = Vector{Float64}(undef, n)
+    ess_bulk_vec = Vector{Float64}(undef, n)
+    ess_tail_vec = Vector{Float64}(undef, n)
+    rhat_vec = Vector{Float64}(undef, n)
+
+    for i in 1:n
+        data = arr[i, :, :]
+        all_vals = vec(data)
+
+        for (j, f) in enumerate(funs)
+            stat_vectors[j][i] = f(all_vals)
+        end
+
+        quants = quantile(all_vals, quantiles)
+        for (k, q) in enumerate(quants)
+            stat_vectors[length(funs) + k][i] = q
+        end
+
+        mcse_vec[i] = mcse(data)
+        ess_bulk_vec[i] = ess(data)
+        ess_tail_vec[i] = ess(data; kind=:tail)
+        rhat_vec[i] = rhat(data)
+    end
+
+    return (;
+        zip(func_names_all, stat_vectors)...,
+        mcse = mcse_vec, ess_bulk = ess_bulk_vec,
+        ess_tail = ess_tail_vec, rhat = rhat_vec
+    )
+end
+
 # build on MCMCChains.summarize
 """
-    summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, standardized=false, draws_idx=nothing, kwargs...)
+    summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_warmup=nothing, kwargs...)
 
 Display formatted summary table of model parameters.
 
 # Arguments
-- `io`: Output stream 
+- `io`: Output stream
 - `TR`: Fitted TuringRegression
 - `funs`: Summary functions to apply (default: [median, std])
-- `standardized`: Return standardized results? Default is false
 - `quantiles`: Quantiles to compute (default: [0.025, 0.975] for 95% CI)
 - `return_table`: Whether to return the summary table as NamedTuple
-- `draws_idx`: Subset of draws to use (default: all draws)
-- `kwargs...`: Additional arguments passed to summarize
+- `drop_warmup`: Number of warmup draws to drop (default: 0 if fewer than 400 samples, else 200)
+- `show_metrics`: Whether to compute and display the prediction metrics table (default: false)
+- `kwargs...`: Additional arguments passed to `draws`/`default_metrics` (e.g. `n_draws`)
 """
 function Base.summary(
     io::IO,
@@ -21,10 +57,10 @@ function Base.summary(
     funs=[mean, std],
     quantiles=[0.025, 0.975],
     return_table=false,
-    draws_idx=nothing,
+    drop_warmup=nothing,
+    show_metrics=false,
     kwargs...,
 )
-    ##LLM in a hurry
     isnothing(TR.samples) && throw(ArgumentError("Turing Model has not yet been fit!()"))
 
     funs_all = vcat(funs, [(x -> quantile(x, q)) for q in quantiles])
@@ -32,53 +68,21 @@ function Base.summary(
         Symbol.(funs), [Symbol("q$(round(q*100; digits=1))") for q in quantiles]
     )
 
-    draws_idx = something(draws_idx, 1:size(TR.samples, 1))
-    param_names = _get_parameter_names(TR)
-    n_params = length(param_names)
+    drop_warmup = something(drop_warmup, size(TR.samples, 1) < 400 ? 0 : 200)
 
-    stat_vectors = [Vector{Float64}(undef, n_params) for _ in func_names_all]
-    mcse_vec = Vector{Float64}(undef, n_params)
-    ess_bulk_vec = Vector{Float64}(undef, n_params)
-    ess_tail_vec = Vector{Float64}(undef, n_params)
-    rhat_vec = Vector{Float64}(undef, n_params)
-
-    for i in 1:n_params  # Parallelize if safe
-        p = param_names[i]
-        data = TR.parameters[param=At(p)]
-        all_vals = vec(data)
-        
-        # Custom functions
-        for (j, f) in enumerate(funs)
-            stat_vectors[j][i] = f(all_vals)
-        end
-        
-        # All quantiles in one call
-        quants = quantile(all_vals, quantiles)
-        for (k, q) in enumerate(quants)
-            stat_vectors[length(funs) + k][i] = q
-        end
-        
-        # Diagnostics - compute once
-        mcse_vec[i] = mcse(data)
-        ess_bulk_vec[i] = ess(data)
-        ess_tail_vec[i] = ess(data; kind=:tail)
-        rhat_vec[i] = rhat(data)
-    end
-
-    chain_info = (;
-        zip(func_names_all, stat_vectors)...,
-        mcse = mcse_vec, ess_bulk = ess_bulk_vec,
-        ess_tail = ess_tail_vec, rhat = rhat_vec
-    )
+    fixef_draws = draws(TR, :fixef; drop_warmup=drop_warmup, collapse=false, kwargs...)
+    param_names = collect(dims(fixef_draws, :fixef))
+    chain_info = _diagnostics_table(fixef_draws, param_names, funs, func_names_all, quantiles)
 
     ncols = length(chain_info)
 
     #metrics
-    drop_warmup = size(TR.samples, 1) < 400 ? 0 : 200
-    metric_tabs = map(
-        f -> default_metrics(TR, f; drop_warmup=drop_warmup), funs_all
-    )
-    metric_tab = hcat(metric_tabs...)
+    if show_metrics
+        metric_tabs = map(
+            f -> default_metrics(f, TR; drop_warmup=drop_warmup, kwargs...), funs_all
+        )
+        metric_tab = hcat(metric_tabs...)
+    end
 
     # show
     show(io, TR; warnings=false)
@@ -87,29 +91,96 @@ function Base.summary(
         io,
         chain_info;
         title="Fixed Effects",
-        header=collect(keys(chain_info)),
-        row_labels=parameter_names(TR),
-        row_label_column_title="Parameter",
+        column_labels=collect(keys(chain_info)),
+        row_labels=param_names,
+        stubhead_label="Parameter",
         highlighters=make_highlighters(ncols),
-        formatters=(
-            ft_printf("%5.2f", 1:(ncols - 5)),
-            ft_printf("%5.2g", ncols-4),
-            ft_printf("%5.0f", [ncols - 2, ncols - 3]),
-            ft_printf("%5.3f", ncols - 1),
-            ft_printf("%5.3f", ncols),
-        ),
+        formatters=[
+            fmt__printf("%5.2f", collect(1:(ncols - 5))),
+            fmt__printf("%5.2g", [ncols - 4]),
+            fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
+            fmt__printf("%5.3f", [ncols - 1]),
+            fmt__printf("%5.3f", [ncols]),
+        ],
         default_options...,
     )
-    pretty_table(
-        io,
-        Matrix(metric_tab);
-        title="Prediction Metrics",
-        header=func_names_all,
-        row_labels=Array(dims(first(metric_tabs), 1)),
-        row_label_column_title="Metric",
-        formatters=(ft_printf("%5.3f")),
-        default_options...,
-    )
+    if TR.modelinfo.has_random_effects
+        for re in TR.z
+            group = re.variable
+
+            level_draws = draws(TR, group; drop_warmup=drop_warmup, collapse=false, kwargs...)
+            level_effect_names = collect(dims(level_draws, :effect))
+            levels = collect(dims(level_draws, :group))
+            for (ei, eff) in enumerate(level_effect_names)
+                level_info = _diagnostics_table(level_draws[ei, :, :, :], levels, funs, func_names_all, quantiles)
+                pretty_table(
+                    io,
+                    level_info;
+                    title="Random Effects: $group ($eff)",
+                    column_labels=collect(keys(level_info)),
+                    row_labels=levels,
+                    stubhead_label="Level",
+                    highlighters=make_highlighters(ncols),
+                    formatters=[
+                        fmt__printf("%5.2f", collect(1:(ncols - 5))),
+                        fmt__printf("%5.2g", [ncols - 4]),
+                        fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
+                        fmt__printf("%5.3f", [ncols - 1]),
+                        fmt__printf("%5.3f", [ncols]),
+                    ],
+                    default_options...,
+                )
+            end
+
+            sd_draws = draws(TR, Symbol(group, "_sd"); drop_warmup=drop_warmup, collapse=false, kwargs...)
+            effect_names = collect(dims(sd_draws, :effect))
+            ranef_info = _diagnostics_table(sd_draws, effect_names, funs, func_names_all, quantiles)
+            pretty_table(
+                io,
+                ranef_info;
+                title="Random Effects: $group (SD)",
+                column_labels=collect(keys(ranef_info)),
+                row_labels=effect_names,
+                stubhead_label="Effect",
+                highlighters=make_highlighters(ncols),
+                formatters=[
+                    fmt__printf("%5.2f", collect(1:(ncols - 5))),
+                    fmt__printf("%5.2g", [ncols - 4]),
+                    fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
+                    fmt__printf("%5.3f", [ncols - 1]),
+                    fmt__printf("%5.3f", [ncols]),
+                ],
+                default_options...,
+            )
+
+            corr_sym = Symbol(group, "_corr")
+            if corr_sym ∈ propertynames(TR.parameters)
+                corr_point = draws(mean, TR, corr_sym; drop_warmup=drop_warmup, kwargs...)
+                pretty_table(
+                    io,
+                    Matrix(corr_point);
+                    title="Random Effects: $group (Correlation)",
+                    column_labels=effect_names,
+                    row_labels=effect_names,
+                    stubhead_label="Effect",
+                    formatters=[fmt__printf("%5.2f")],
+                    default_options...,
+                )
+            end
+        end
+    end
+    if show_metrics
+        pretty_table(
+            io,
+            Matrix(metric_tab);
+            title="Prediction Metrics",
+            column_labels=func_names_all,
+            row_labels=Array(dims(first(metric_tabs), 1)),
+            stubhead_label="Metric",
+            formatters=[fmt__printf("%5.3f")],
+            default_options...,
+        )
+    end
     model_warnings(chain_info)
     if return_table
         return chain_info
@@ -162,28 +233,25 @@ end
 
 # Highlighters
 function make_highlighters(ncols)
-    return (
+    return [
         #R hat
-        Highlighter(
+        TextHighlighter(
             (data, i, j) -> (j == ncols && data[j][i] > 1.05), crayon"bold magenta"
         ),
-        Highlighter((data, i, j) -> (j == ncols && data[j][i] > 1.02), crayon"magenta"),
+        TextHighlighter((data, i, j) -> (j == ncols && data[j][i] > 1.02), crayon"magenta"),
         #ESS
-        Highlighter(
+        TextHighlighter(
             (data, i, j) -> (j ∈ [ncols-1, ncols-2] && data[j][i] < 100),
             crayon"bold magenta",
         ),
-        Highlighter(
+        TextHighlighter(
             (data, i, j) -> (j ∈ [ncols-1, ncols-2] && data[j][i] < 250), crayon"magenta"
         ),
-    )
+    ]
 end
 
 # Default table options
-default_options = (;
-    tf=tf_compact,
-    header_crayon=crayon"bold",
-    row_label_header_crayon=crayon"bold",
-    crop=:horizontal,
-    show_subheader=false,
+const default_options = (;
+    style=TextTableStyle(; column_label=crayon"bold", stubhead_label=crayon"bold"),
+    fit_table_in_display_horizontally=false,
 )

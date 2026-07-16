@@ -1,48 +1,32 @@
-
-#API for ParetoSmooth
-
 """
-    psis_loo(TR::TuringRegression)
+    psis_loo(TR::TuringRegression; kwargs...)
 
-Calculate leave-one-out cross-validation using Pareto smoothed importance sampling.
+Calculate leave-one-out cross-validation using Pareto smoothed importance
+sampling. Returns a `PosteriorStats.PSISLOOResult` with predictive accuracy
+measures. Higher ELPD values indicate better predictive performance.
 
-Returns PSIS-LOO object with predictive accuracy measures. Lower ELPD values indicate better predictive performance.
+`kwargs...` are forwarded to `PosteriorStats.loo`.
 """
-function ParetoSmooth.psis_loo(TR::TuringRegression)
-    ll = loglikelihood(TR.model, TR.samples)
-    ll_rshp = reshape(ll, 1, size(ll)...)
-    return psis_loo(ll_rshp; source="mcmc")
+function psis_loo(TR::TuringRegression; kwargs...)
+    isnothing(TR.samples) && throw(ArgumentError("Model has not been fitted."))
+    model_with_data = _build_model_with_data(TR)
+    gq = generated_quantities(model_with_data, TR.samples)
+    nobs = length(gq[1, 1].loglik)
+    ll = [gq[i, j].loglik[n] for i in axes(gq, 1), j in axes(gq, 2), n in 1:nobs]
+    return loo(ll; kwargs...)
 end
 
 """
     loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)
-
-Compare multiple models using leave-one-out cross-validation.
-    Passing `model_names` as a tuple will name the outputs.
-
-# Arguments
-- `models`: Vector of fitted TuringRegression objects
-- `kwargs...`: Additional arguments passed to ParetoSmooth.loo_compare
-"""
-function ParetoSmooth.loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)
-    @nospecialize models
-    psis_objects = psis_loo.(models)
-    return loo_compare(psis_objects; kwargs...)
-end
-
-"""
     loo_compare(models::TuringRegression...; kwargs...)
 
-Compare multiple models using leave-one-out cross-validation.
-    Passing `model_names` as a tuple will name the outputs.
+Compare models using leave-one-out cross-validation.
 
 # Arguments
-- `models...`: Multiple TuringRegression objects passed as separate arguments
-- `kwargs...`: Additional arguments passed to ParetoSmooth.loo_compare
+- `models`: Vector of fitted TuringRegression objects (or passed as separate arguments)
+- `kwargs...`: Additional arguments passed to `PosteriorStats.compare`
 """
-function ParetoSmooth.loo_compare(models::TuringRegression...; kwargs...)
-    @nospecialize models
-    @views models = [models[i] for i in 1:length(models)]
-    cv_results = psis_loo.(models)
-    return loo_compare(cv_results; kwargs...)
+function loo_compare(models::AbstractVector{<:TuringRegression}; kwargs...)
+    return compare(psis_loo.(models); kwargs...)
 end
+loo_compare(models::TuringRegression...; kwargs...) = loo_compare(collect(models); kwargs...)

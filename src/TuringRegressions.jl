@@ -2,7 +2,6 @@
 module TuringRegressions
 
 using Reexport
-using Requires: @require
 
 @reexport using DimensionalData
 @reexport using LogExpFunctions: logit, logistic
@@ -15,17 +14,19 @@ using PrettyTables
 using MixedModels
 using Random
 using StatisticalMeasures
-using ParetoSmooth
+using PosteriorStats: loo, compare
 using MCMCDiagnosticTools
+using MCMCChains: MCMCChains, summarize, Chains
 
 using MacroTools: prettify
 using Suppressor: @suppress
 using StatsBase: mean, std
 using DataFrames: DataFrame
-using LinearAlgebra: I, dot
-using Colors: colormap
+using Tables: columntable
+using LinearAlgebra: I, dot, Symmetric, diagm
 using CategoricalArrays: categorical
 using CategoricalDistributions: UnivariateFinite
+using MixedModels: _ranef_refs
 
 include("prior.jl")
 include("formula_handlers.jl")
@@ -37,37 +38,28 @@ include("predict.jl")
 include("summary.jl")
 include("metrics.jl")
 include("comparison.jl")
+include("plots.jl")
 
 export TuringRegression,
     turing_glm,
     fit!,
-    pretty,
     model_warnings,
-    parameter_names,
-    get_parameters,
-    parameters,
-    coef,
-    fixef,
-    internals,
+    draws,
     outcome,
     predictors,
     outcome_as_distribution,
     predict,
     psis_loo,
     loo_compare,
-    lineribbon,
     calculate_metrics,
     default_metrics,
     default_prior,
-    pseudo_r2
+    pseudo_r2,
+    lineribbon,
+    lineribbon!,
+    conditional_dependency,
+    pp_check_dens,
+    pp_check_dens_overlay,
+    pp_check_hist
 
-function __init__()
-    #Makie required for band
-    @require Makie="ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a" begin
-        include("plots/lineribbon.jl")
-        export lineribbon
-        include("plots/plots.jl")
-        export conditional_dependency, pp_check_dens, pp_check_dens_overlay, pp_check_hist
-    end
-end
 end

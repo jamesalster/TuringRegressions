@@ -6,19 +6,20 @@ end
 
 # Calculate many metrics across draws, and handle the DimArray neatly
 """
-    calculate_metrics(TR::TuringRegression, metrics::Vector, fun=nothing; dropdims=true, threshold=0.5, kwargs...)
+    calculate_metrics(TR::TuringRegression, metrics::Vector; dropdims=true, threshold=0.5, kwargs...)
+    calculate_metrics(fun::Function, TR::TuringRegression, metrics::Vector; dropdims=true, threshold=0.5, kwargs...)
 
 Calculate multiple metrics on model predictions using expected predictions (epred).
 
-Takes a list of metrics (like `accuracy`, `rmse`) from `StatisticalMethods.jl` and applies each one to compare 
+Takes a list of metrics (like `accuracy`, `rmse`) from `StatisticalMethods.jl` and applies each one to compare
 your model's predictions against actual outcomes. Returns results in a table.
 
 # Arguments
+- `fun`: Optional function to apply across draws (e.g., mean, median, std), passed first matching `draws(f, TR, type)`
 - `metrics`: Vector of metric functions to calculate
-- `fun`: Optional function to apply across draws (e.g., mean, median, std)
 - `threshold`: Class threshold for binary classification (ignored for other models)
 - `drop_warmup`: Number of warmup samples to drop from each chain
-- `n_draws`: Number of draws to keep (-1 for all post-warmup)  
+- `n_draws`: Number of draws to keep (-1 for all post-warmup)
 - `collapse`: Whether to collapse chains into single dimension
 - `dropdims`: Whether to drop singleton dimensions (default: true)
 
@@ -26,14 +27,14 @@ your model's predictions against actual outcomes. Returns results in a table.
 ```julia
 calculate_metrics(my_model, [accuracy, kappa])
 # collapse with function
-calculate_metrics(my_model, [rmse, mae], mean, threshold=0.6)
+calculate_metrics(mean, my_model, [rmse, mae], threshold=0.6)
 # select draws
 calculate_metrics(my_model, [rmse, mae], drop_warmup=500, collapse=false)
+```
 """
 function calculate_metrics(
     TR::TuringRegression{T},
-    metrics::Vector,
-    fun::Union{Nothing,Function}=nothing;
+    metrics::Vector;
     dropdims=true,
     threshold=0.5,
     kwargs...,
@@ -46,10 +47,9 @@ function calculate_metrics(
 
         # handle metrics requiring a numeric outcome
         numeric_metric_table = zeros(0, size(preds)[2:end]...)
-        if AreaUnderCurve ∈ metrics
+        if auc ∈ metrics
             numeric_metric_table = cat(numeric_metric_table, _get_auc(preds, y); dims = 1)
         end
-        println(numeric_metric_table)
         if pseudo_r2 ∈ metrics
             numeric_metric_table = cat(numeric_metric_table, _calculate_metric(pseudo_r2, preds, y); dims = 1)
         end
@@ -80,7 +80,7 @@ function calculate_metrics(
     metric_names = replace.(
         string.(metrics2), r"\(.*\)" => "", "LPLoss(p = 1)" => "MeanAbsoluteError"
     )
-    metric_names = AreaUnderCurve ∈ metrics ? vcat(metric_names, "AreaUnderCurve") : metric_names
+    metric_names = auc ∈ metrics ? vcat(metric_names, "AreaUnderCurve") : metric_names
     metric_names = pseudo_r2 ∈ metrics ? vcat(metric_names, "Pseudo r2") : metric_names
 
     if ndims(metric_table) == 2
@@ -89,8 +89,19 @@ function calculate_metrics(
         metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}, Dim{:chain}))
     end
 
-    metric_table = isnothing(fun) ? metric_table : mapslices(fun, metric_table; dims=2)
-    return dropdims ? drop_single_dims(metric_table) : metric_table
+    return dropdims ? _drop_single_dims(metric_table) : metric_table
+end
+
+function calculate_metrics(
+    fun::Function,
+    TR::TuringRegression,
+    metrics::Vector;
+    dropdims=true,
+    kwargs...,
+)::DimArray
+    metric_table = calculate_metrics(TR, metrics; dropdims=false, kwargs...)
+    metric_table = mapslices(fun, metric_table; dims=2)
+    return dropdims ? _drop_single_dims(metric_table) : metric_table
 end
 
 # Get the default metrics for a model family
@@ -110,7 +121,8 @@ function _get_default_metrics(TR::TuringRegression{T}) where {T}
 end
 
 """
-    default_metrics(TR::TuringRegression, fun=nothing; kwargs...)
+    default_metrics(TR::TuringRegression; kwargs...)
+    default_metrics(fun::Function, TR::TuringRegression; kwargs...)
 
 Calculate standard metrics for your model type using expected predictions (epred).
 
@@ -120,11 +132,12 @@ For regression: R-squared, RMSE, mean absolute error.
 
 Other arguments as for `calculate_metrics()`.
 """
-function default_metrics(
-    TR::TuringRegression{T}, fun::Union{Nothing,Function}=nothing; kwargs...
-) where {T}
-    metrics = _get_default_metrics(TR)
-    return calculate_metrics(TR, metrics, fun; kwargs...)
+function default_metrics(TR::TuringRegression; kwargs...)
+    return calculate_metrics(TR, _get_default_metrics(TR); kwargs...)
+end
+
+function default_metrics(fun::Function, TR::TuringRegression; kwargs...)
+    return calculate_metrics(fun, TR, _get_default_metrics(TR); kwargs...)
 end
 
 # Special function to handle AUC with distribution conversion

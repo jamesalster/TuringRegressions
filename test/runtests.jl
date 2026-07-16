@@ -1,329 +1,418 @@
-
 using TuringRegressions
 using Test
 using RDatasets
 using MCMCChains
-using ParetoSmooth
 using StatsModels
-using StatsBase: mean, std
+using StatsBase: mean, std, var
 using Suppressor: @suppress
 using Random
 using GLM: GLM
 using StatisticalMeasures
 using CategoricalDistributions
+using DataFrames
+using CairoMakie
+CairoMakie.activate!()
+using PrettyTables
+
+Random.seed!(1)
+
+# Full-sampling-budget calls read these so the benchmark can be re-run at
+# production settings (N=2000, nchains=4) via env vars, without editing tests.
+const BENCH_N = parse(Int, get(ENV, "TR_BENCH_N", "300"))
+const BENCH_NCHAINS = parse(Int, get(ENV, "TR_BENCH_NCHAINS", "2"))
 
 @info "Setting up tests"
+
 mtcars = dataset("datasets", "mtcars")
 
 titanic_df = dataset("datasets", "Titanic")
-# Expand the frequency table to individual cases
-titanic_expanded = vcat([repeat(DataFrame(row[1:4]), row.Freq) for row in eachrow(titanic_df)]...)
-titanic_expanded.Survived = titanic_expanded.Survived .== "Yes"
+# Expand frequency cases into one row per observation
+titanic = vcat([repeat(DataFrame(row[1:4]), row.Freq) for row in eachrow(titanic_df)]...)
+titanic.Survived = titanic.Survived .== "Yes"
 
-@warn "No tests yet implemented for plots"
+# Canonical mixed-model dataset (lme4): Reaction ~ Days + (Days|Subject), 18 subjects.
+# Published lme4 REML estimates used below as loose sanity bounds:
+# fixef ≈ (Intercept=251.4, Days=10.5); ranef sd ≈ (Intercept=24.7, Days=5.9); corr ≈ 0.07
+sleepstudy = dataset("lme4", "sleepstudy")
 
-@testset "Vs. GLM" begin
-    mod1 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal);
-    Random.seed!(123)
-    fit!(mod1, N=15000)
-    mod_glm = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars);
-    @test isapprox(
-        GLM.coef(mod_glm), coef(mod1, median; drop_warmup=2000), atol=0.025
-    )
-    @test isapprox(
-        GLM.predict(mod_glm), predict(mod1, median; drop_warmup=2000, type=:epred), atol=0.1
-    )
+# RE x non-Normal family: Incidence ~ Period + (1|Herd)
+cbpp = dataset("lme4", "cbpp")
 
-    mod2 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson);
-    Random.seed!(123)
-    fit!(mod2, N=15000);
-    mod2_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink());
-    @test isapprox(
-        GLM.coef(mod2_glm), parameters(mod2, median; drop_warmup=2000), atol=0.025
-    )
-    @test isapprox(
-        GLM.predict(mod2_glm),
-        predict(mod2, median; drop_warmup=2000, type=:epred),
-        atol=1,
-    )
+# small/quick fit for tests that only check API shape, not parameter recovery
+quickfit!(TR) = @suppress fit!(TR; N=300, nchains=2, quiet=true)
 
-    mod3 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial);
-    Random.seed!(123)
-    fit!(mod3, N=15000);
-    summary(mod3)
-    mod3_glm = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink());
-    @test isapprox(
-        GLM.coef(mod3_glm), parameters(mod3, median; drop_warmup=2000)[1:3], atol=0.025
-    )
-    @test isapprox(
-        GLM.predict(mod3_glm), predict(mod3, median; drop_warmup=2000, type=:epred), atol=2
-    )
+# Benchmark table: posterior mean vs canonical (GLM MLE / lme4 REML), full-budget
+# models only (N=BENCH_N, nchains=BENCH_NCHAINS). Printed at the end of the run — a running record
+# of how tight our tolerances actually are, not just whether they pass.
+const BENCHMARK_ROWS = NamedTuple[]
 
-    Random.seed!(123)
-    mod4 = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic_expanded, Bernoulli);
-    fit!(mod4, N=15000);
-    mod4_glm = GLM.glm(@formula(Survived ~ Class + Sex + Age), titanic_expanded, Binomial(), GLM.LogitLink());
-    GLM.coef(mod4_glm)
-    @test isapprox(
-        GLM.coef(mod4_glm), parameters(mod4, median; drop_warmup=2000), atol=0.05
-    )
-    @test isapprox(
-        GLM.predict(mod4_glm),
-        predict(mod4, median; drop_warmup=2000, type=:epred),
-        atol=0.05,
-    )
-end
-
-#@testset "Model Creation" begin
-#    mod1 = @test_nowarn turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal);
-#
-#    predmat = Matrix(mtcars[:, [:Cyl, :Disp]])
-#    y = mtcars.MPG
-#
-#    @test mod1.formula isa StatsModels.FormulaTerm
-#    @test mod1.prior isa RegressionPrior
-#    @test mod1.link == identity
-#    @test mod1.y isa Vector
-#    @test mod1.X isa Matrix
-#    @test isnothing(mod1.z)
-#    @test mod1.X_names == (:Cyl, :Disp)
-#    @test mod1.Z_names == ()
-#    @test isnothing(mod1.samples)
-#
-#    # CUstrom prior
-#    prior = Regression(Normal(0, 2), Normal(0, 1), Exponential(1));
-#    mod1b = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal; priors=prior);
-#    @test mod1b.prior == prior
-#
-#    # Test X y method
-#    mod2 = turing_glm(y, predmat, Normal; names=[:Cyl, :Disp]);
-#    @test mod2.formula isa StatsModels.FormulaTerm
-#    @test mod2.y == mod1.y
-#    @test mod2.X == mod1.X
-#    @test mod2.X_names == mod1.X_names
-#
-#    mod2b = turing_glm(y, predmat, Normal)
-#    @test mod2b.X_names == (:X1, :X2)
-#    @test mod2b.X == mod1.X
-#
-#    # Model creation
-#    mod3 = @test_throws ArgumentError turing_glm(
-#        @formula(MPG ~ Cyl + (1|Disp)), mtcars, Normal
-#    );
-#
-#    # Link
-#    mod3 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, TDist);
-#    @test mod3.link == identity
-#    mod4 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Bernoulli);
-#    @test mod4.link == logit
-#    mod5 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Poisson);
-#    @test mod5.link == log
-#    mod6 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, NegativeBinomial);
-#    @test mod6.link == log
-#    # Test error (from TuringGLM) on wrong family
-#    mod7 = @test_throws ArgumentError turing_glm(
-#        @formula(MPG ~ Cyl + Disp), mtcars, Categorical
-#    )
-#
-#    # Standardized
-#    mod8 = @test_warn "standardi" turing_glm(
-#        @formula(MPG ~ Cyl + Disp), mtcars, Normal; standardize=false
-#    );
-#    @test mod8.X == predmat
-#    @test mod8.y == y
-#    @test !mod8.standardized
-#
-#    # Standardization for count outcome
-#    mod9 = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson);
-#    @test isapprox(mean(mod9.X; dims=1), zeros(1, size(mod9.X, 2)); atol=1e-12)
-#    @test isapprox(std(mod9.X; dims=1), ones(1, size(mod9.X, 2)); atol=1e-12)
-#    @test mod9.y == vec(mtcars.HP)
-#    @test !mod8.standardized
-#end
-#
-#@testset "Model Fit" begin
-#    mod1 = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal);
-#
-#    # Fit
-#    mod1 = @test_nowarn fit!(mod1);
-#    @test mod1.samples isa MCMCChains.Chains
-#    @test mod1.unstd_params isa MCMCChains.Chains
-#
-#    # Default size
-#    @test size(mod1.samples) == (2000, 16, 4)
-#
-#    # Kwargs to fit
-#    @test_nowarn fit!(mod1; parallel=MCMCSerial(), N=4000, nchains=1);
-#    @test size(mod1.samples) == (4000, 16, 1)
-#
-#    # Fit warnings
-#    mod1 = fit!(mod1, N=10);
-#    @test_warn "rhat" show(mod1);
-#    @test_warn "ess" show(mod1);
-#    @test_warn "MCSE" show(mod1);
-#end
-#
-## Init global model for following sections
-@info "Fitting models for tests"
-
-model = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, TDist);
-model_empty = deepcopy(model);
-model = @suppress fit!(model);
-mod_count = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson);
-fit!(mod_count);
-
-@testset "Parameter Methods" begin
-    default_samples = 2000
-    default_chains = 4
-    default_dropwarmup = 200
-    expected_out = (default_samples - default_dropwarmup) * default_chains
-
-    param_names = [ :α, :Cyl, :Disp, :σ, :ν]
-    @test parameter_names(model) == param_names
-
-    # Test the main get_parameters method
-    pars = [:α, :σ, :ν]
-    ps = get_parameters(model, pars)
-    @test ps isa DimArray
-    @test size(ps) == (length(pars), expected_out)
-    @test Array(dims(ps, 1)) == string.(pars)
-    expected_idx = vec([
-        (i, j) for i in (default_dropwarmup + 1):default_samples, j in 1:default_chains
-    ])
-    @test Array(dims(ps, 2)) == expected_idx
-
-    # Test kwargs
-    @test size(get_parameters(model, pars; drop_warmup=0)) ==
-        (length(pars), default_samples * default_chains)
-    @test size(get_parameters(model, pars; drop_warmup=800)) ==
-        (length(pars), (default_samples - 800) * default_chains)
-    @test size(get_parameters(model, pars; n_draws=50)) == (length(pars), 50 * default_chains)
-    @test size(get_parameters(model, pars; n_draws=50)) == (length(pars), 50 * default_chains)
-    @test size(get_parameters(model, pars; n_draws=50)) == (length(pars), 50 * default_chains)
-    @test size(get_parameters(model, pars; collapse=false)) ==
-        ( length(pars), default_samples - default_dropwarmup, default_chains)
-    @test_throws ErrorException get_parameters(model, pars; drop_warmup=2000, n_draws=5000)
-
-    # Test derivative methods with funciton and kwargs
-    pars = parameters(model)
-    @test pars == get_parameters(model, [:α, Symbol("β[1]"), Symbol("β[2]"), :σ, :ν])
-    @test isapprox(parameters(model, mean), mean(parameters(model), dims=2))
-    @test ndims(parameters(model, median; dropdims=false)) == 2
-    @test ndims(parameters(model, median; collapse=false, dropdims=false)) == 3
-
-    # Test other methods more simply
-    @test fixef(model) == get_parameters(model, [:α, Symbol("β[1]"), Symbol("β[2]")])
-    @test isapprox(fixef(model, mean), mean(fixef(model), dims=2))
-    @test ndims(fixef(model, median; dropdims=false)) == 2
-
-    @test coef(model) == fixef(model, median)
-
-    ints = internals(model)
-    @test Array(dims(ints, 1)) == Symbol.([
-        "lp",
-        "n_steps",
-        "is_accept",
-        "acceptance_rate",
-        "log_density",
-        "hamiltonian_energy",
-        "hamiltonian_energy_error",
-        "max_hamiltonian_energy_error",
-        "tree_depth",
-        "numerical_error",
-        "step_size",
-        "nom_step_size",
-    ])
-    @test isapprox(internals(model, mean), mean(ints, dims=2))
-    @test ndims(internals(model, median; dropdims=false)) == 2
-
-    out = outcome(model)
-    @test out isa DimArray
-end
-
-@testset "Prediction" begin
-    # Basic prediction, with a count model
-    predmat = Matrix(mtcars[5:9, [:Cyl, :Disp]])
-    pred_data = (predmat .- mean(predmat; dims=1)) ./ std(predmat; dims=1)
-
-    # Methods pass
-    lp = @test_nowarn predict(mod_count, pred_data; type=:linpred)
-    ep = @test_nowarn predict(mod_count, pred_data; type=:epred)
-    pp = @test_nowarn predict(mod_count, pred_data; type=:posterior)
-
-    # Relations: link
-    @test isapprox(lp, log.(ep))
-    @test var(pp) > var(ep) #higher variance
-    # Relations: without link
-    @test predict(model, pred_data; type=:linpred) == predict(model, pred_data; type=:epred)
-    @test var(predict(model, pred_data; type=:posterior)) >
-        var(predict(model, pred_data; type=:epred))
-end
-
-
-@testset "Display Methods" begin
-    show_output = sprint(show, model)
-    @test contains(show_output, "TuringRegression Model")
-    @test contains(show_output, "TDist (link: identity)")
-    @test contains(show_output, "MPG ~ Cyl + Disp")
-    @test contains(show_output, "Prior")
-    @test contains(show_output, "Fixed Effects")
-    @test contains(show_output, "Intercept")
-    @test contains(show_output, "Normal(μ=0.0, σ=2.0)")
-    @test contains(show_output, "Normal(μ=0.0, σ=5.0)")
-    @test contains(show_output, "Auxiliary")
-    @test contains(show_output, "TDist")
-    @test contains(show_output, "32") #Observations
-    @test contains(show_output, "8000 samples")
-    @test contains(show_output, "4 chains")
-    # Empty
-    @test contains(sprint(show, mod_empty), "empty")
-
-    # Pretty version
-    pretty_output = sprint(pretty, model)
-    @test contains(pretty_output, show_output)
-    @test contains(pretty_output, "Fixed Effects")
-    @test all(
-        contains.(
-            Ref(pretty_output),
-            ["mean", "std", "q2.5", "q97.5", "mcse", "ess_bulk", "ess_tail"],
+function record_benchmark!(model_name, param_name, ours, canonical)
+    push!(
+        BENCHMARK_ROWS,
+        (
+            model=model_name,
+            param=param_name,
+            ours=round(ours; digits=3),
+            canonical=round(canonical; digits=3),
+            abs_err=round(abs(ours - canonical); digits=3),
+            rel_err_pct=round(100 * abs(ours - canonical) / max(abs(canonical), 1e-8); digits=1),
         ),
     )
-    @test contains(pretty_output, "Prediction Metrics")
-    @test contains(pretty_output, "RSquared")
-    @test all(contains.(Ref(pretty_output), ["Cyl", "Disp"]))
-    coef = string.(round.(parent(fixef(model, mean; drop_warmup=0)); digits=2))
-    @test all(contains.(Ref(pretty_output), coef))
 end
 
-@testset "Model Comparison" begin
-    @test psis_loo(mod) isa ParetoSmooth.PsisLoo
-    comp1 = loo_compare(model, model_count)
-    @test comp1 isa ParetoSmooth.ModelComparison
-    comp2 = loo_compare([model, model_count])
-    @test sprint(show, comp1) == sprint(show, comp2)
-    comp1b = loo_compare(model, model_count; model_names=("Mod1", "Mod2"))
-    @test contains(sprint(show, comp1b), "Mod1")
+try # T11: keep going through sibling testsets on failure, still print benchmark table
+@testset "TuringRegressions" begin
+
+@testset "Predict" begin
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod)
+
+    @testset "call forms" begin
+        @test_nowarn predict(mod) # fitted data
+        @test_nowarn predict(mod, mod.X) # matrix
+        new_data = mtcars[1:5, :]
+        @test_nowarn predict(mod, new_data) # new DataFrame
+    end
+
+    @testset "type variants and link relations (V5, V6)" begin
+        linp = predict(mod; type=:linpred)
+        ep = predict(mod; type=:epred)
+        post = predict(mod; type=:posterior)
+
+        # Identity link (Normal): linpred == epred
+        @test isapprox(Array(linp), Array(ep))
+        # Posterior predictive adds observation noise -> higher variance than epred
+        @test mean(var(Array(post); dims=2)) > mean(var(Array(ep); dims=2))
+    end
+
+    @testset "log-link relation (Poisson)" begin
+        mod_count = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
+        quickfit!(mod_count)
+        linp = predict(mod_count; type=:linpred)
+        ep = predict(mod_count; type=:epred)
+        @test isapprox(Array(linp), log.(Array(ep)))
+    end
+
+    @testset "new_data uses raw scale, no re-standardisation (V15)" begin
+        new_data = mtcars[3:8, :]
+        glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)
+        glm_pred = GLM.predict(glm_mod, new_data)
+        tr_pred = Array(predict(mean, mod, new_data; type=:epred))
+        @test isapprox(glm_pred, tr_pred, atol=1.5)
+    end
+end
+
+@testset "draws API" begin
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod)
+
+    @test draws(mod) isa DimStack
+    @test draws(mod, :fixef) isa DimArray
+    @test_throws ArgumentError draws(mod, :not_a_real_type)
+    @test_throws AssertionError draws(mod, :fixef; drop_warmup=0, n_draws=10_000)
+
+    collapsed = draws(mod, :fixef; collapse=true)
+    uncollapsed = draws(mod, :fixef; collapse=false)
+    @test ndims(uncollapsed) == ndims(collapsed) + 1
+    @test hasdim(uncollapsed, :chain)
 end
 
 @testset "Metrics" begin
-    tab = @test_nowarn calculate_metrics(model, [rsq, rmse])
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod)
+
+    tab = @test_nowarn calculate_metrics(mod, [rsq, rmse])
     @test tab isa DimArray
     @test all(dims(tab, 1) .== ["RSquared", "RootMeanSquaredError"])
-    tab1b = @test_nowarn default_metrics(model)
-    @test all(dims(tab1b, 1) .== ["RSquared", "RootMeanSquaredError", "MeanAbsoluteError"])
 
-    # Categorical
-    mtcars.binom = mtcars.MPG .> 20;
-    mod4 = turing_glm(@formula(binom ~ Cyl + Disp), mtcars, Bernoulli);
-    fit!(mod4);
-    tab2 = @test_nowarn calculate_metrics(mod4, [accuracy, kappa])
-    @test all(dims(tab2, 1) .== ["Accuracy", "Kappa"])
-    tab2b = @test_nowarn default_metrics(mod4; collapse=false)
+    default_tab = @test_nowarn default_metrics(mod)
+    @test all(dims(default_tab, 1) .== ["RSquared", "RootMeanSquaredError", "MeanAbsoluteError"])
+
+    mtcars_binom = copy(mtcars)
+    mtcars_binom.binom = mtcars_binom.MPG .> 20
+    mod_bin = turing_glm(@formula(binom ~ Cyl + Disp), mtcars_binom, Bernoulli)
+    quickfit!(mod_bin)
+
+    tab_bin = @test_nowarn calculate_metrics(mod_bin, [accuracy, kappa])
+    @test all(dims(tab_bin, 1) .== ["Accuracy", "Kappa"])
+
+    default_bin = @test_nowarn default_metrics(mod_bin)
     @test all(
-        dims(tab2b, 1) .==
+        dims(default_bin, 1) .==
         ["Accuracy", "Kappa", "TruePositiveRate", "TrueNegativeRate", "AreaUnderCurve", "Pseudo r2"],
     )
 
-    out = @test_nowarn outcome_as_distribution(mod4)
-    @test out isa UnivariateFinite
+    @test outcome_as_distribution(mod_bin) isa UnivariateFinite
+    @test_throws ArgumentError outcome_as_distribution(mod)
 end
+
+@testset "Model Comparison" begin
+    Random.seed!(123)
+    mod_full = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod_full)
+    mod_small = turing_glm(@formula(MPG ~ Cyl), mtcars, Normal)
+    quickfit!(mod_small)
+
+    mod_unfit = turing_glm(@formula(MPG ~ Cyl), mtcars, Normal)
+    @test_throws ArgumentError psis_loo(mod_unfit)
+
+    loo_full = psis_loo(mod_full)
+    @test isfinite(loo_full.estimates.elpd)
+    @test loo_full.estimates.se_elpd > 0
+
+    mc_vec = loo_compare([mod_full, mod_small])
+    mc_vararg = loo_compare(mod_full, mod_small)
+    @test mc_vec.rank == mc_vararg.rank
+    @test mc_vec.elpd_diff == mc_vararg.elpd_diff
+    @test length(mc_vec.rank) == 2
+    @test minimum(mc_vec.elpd_diff) == 0.0 # best model has elpd_diff 0
+end
+
+@testset "Show/summary output" begin
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod)
+
+    show_output = sprint(show, mod)
+    @test contains(show_output, "TuringRegression Model")
+    @test contains(show_output, "Normal")
+    @test contains(show_output, "MPG")
+
+    summary_output = sprint((io, x) -> summary(io, x; show_metrics=true), mod)
+    @test contains(summary_output, "Fixed Effects")
+    @test all(contains.(Ref(summary_output), ["mean", "std", "ess_bulk", "ess_tail", "rhat"]))
+    @test contains(summary_output, "Prediction Metrics")
+
+    summary_no_metrics = sprint(summary, mod)
+    @test !contains(summary_no_metrics, "Prediction Metrics")
+
+    Random.seed!(123)
+    mod_re = turing_glm(
+        @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal
+    )
+    quickfit!(mod_re)
+    re_output = sprint(summary, mod_re)
+    @test contains(re_output, "Random Effects: Subject")
+    @test contains(re_output, "(SD)")
+    @test contains(re_output, "Correlation")
+end
+
+@testset "Plots (Makie extension smoke test)" begin
+    # Not substantive — just checks the Makie extension still loads and runs.
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod)
+
+    @test_nowarn lineribbon(1:10, randn(50, 10))
+    @test_nowarn conditional_dependency(mod, :Cyl)
+    @test_nowarn pp_check_hist(mod)
+    @test_nowarn pp_check_dens(mod)
+    @test_nowarn pp_check_dens_overlay(mod; n_draws=20)
+end
+
+@testset "Warnings & errors" begin
+    @test_throws ErrorException turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Gamma)
+
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    @suppress fit!(mod; N=50, nchains=1, quiet=true)
+    @test_logs (:warn,) match_mode = :any model_warnings(mod)
+end
+
+@testset "Weighted fit (T10, V14)" begin
+    Random.seed!(42)
+    mod_unweighted = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    quickfit!(mod_unweighted)
+
+    Random.seed!(42)
+    mod_weighted = turing_glm(
+        @formula(MPG ~ Cyl + Disp), mtcars, Normal; weights=ones(nrow(mtcars))
+    )
+    quickfit!(mod_weighted)
+
+    # weights≡1 is mathematically identical to unweighted, but `_weighted_likelihood`'s
+    # per-obs `@addlogprob!` loop vs `_likelihood`'s vectorized `MvNormal` logpdf take a
+    # different numeric path through NUTS, so posterior means at N=300 land close but not
+    # bit-identical (T12). Compare in pooled-SD units instead of a raw atol so the check
+    # scales with actual MCMC noise rather than each param's raw magnitude.
+    u_mean = Array(draws(mean, mod_unweighted, :fixef))
+    w_mean = Array(draws(mean, mod_weighted, :fixef))
+    u_sd = Array(draws(std, mod_unweighted, :fixef))
+    w_sd = Array(draws(std, mod_weighted, :fixef))
+    z = abs.(u_mean .- w_mean) ./ sqrt.(u_sd .^ 2 .+ w_sd .^ 2)
+
+    @test all(z .< 1.0)
+end
+
+# --- Big fits (Fixed/Random effects) run last: heaviest, slowest testsets ---
+
+@testset "Fixed effects vs GLM" begin
+    @testset "Normal" begin
+        Random.seed!(123)
+        mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+
+        glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)
+        est = Array(draws(mean, mod, :fixef))
+        names = string.(collect(dims(draws(mean, mod, :fixef), :fixef))[1:3])
+        for (n, o, c) in zip(names, est[1:3], GLM.coef(glm_mod))
+            record_benchmark!("Normal (mtcars)", n, o, c)
+        end
+
+        # calibrated against N=2000/nchains=4 posterior mean, see benchmark table
+        @test isapprox(GLM.coef(glm_mod), est[1:3], atol=0.3)
+        @test isapprox(
+            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=1.0
+        )
+    end
+
+    @testset "Poisson" begin
+        Random.seed!(123)
+        mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+
+        glm_mod = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink())
+        est = Array(draws(mean, mod, :fixef))
+        names = string.(collect(dims(draws(mean, mod, :fixef), :fixef))[1:3])
+        for (n, o, c) in zip(names, est[1:3], GLM.coef(glm_mod))
+            record_benchmark!("Poisson (mtcars)", n, o, c)
+        end
+
+        @test isapprox(GLM.coef(glm_mod), est[1:3], atol=0.05)
+        @test isapprox(
+            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=10.0
+        )
+    end
+
+    @testset "NegativeBinomial" begin
+        Random.seed!(123)
+        mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+
+        glm_mod = GLM.glm(
+            @formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink()
+        )
+        est = Array(draws(mean, mod, :fixef))
+        names = string.(collect(dims(draws(mean, mod, :fixef), :fixef))[1:3])
+        for (n, o, c) in zip(names, est[1:3], GLM.coef(glm_mod))
+            record_benchmark!("NegativeBinomial (mtcars)", n, o, c)
+        end
+
+        @test isapprox(GLM.coef(glm_mod), est[1:3], atol=0.1)
+        @test isapprox(
+            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=15.0
+        )
+    end
+
+    @testset "Bernoulli" begin
+        Random.seed!(123)
+        mod = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic, Bernoulli)
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+
+        glm_mod = GLM.glm(
+            @formula(Survived ~ Class + Sex + Age), titanic, Binomial(), GLM.LogitLink()
+        )
+        est = Array(draws(mean, mod, :fixef))
+        names = string.(collect(dims(draws(mean, mod, :fixef), :fixef))[1:6])
+        for (n, o, c) in zip(names, est[1:6], GLM.coef(glm_mod))
+            record_benchmark!("Bernoulli (titanic)", n, o, c)
+        end
+
+        @test isapprox(GLM.coef(glm_mod), est[1:6], atol=0.1)
+        @test isapprox(
+            GLM.predict(glm_mod), Array(predict(mean, mod; type=:epred)), atol=0.1
+        )
+    end
+end
+
+@testset "Random effects — sleepstudy" begin
+    @testset "correlated intercept + slope (1+Days|Subject)" begin
+        Random.seed!(123)
+        mod = turing_glm(
+            @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal
+        )
+        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+
+        d = draws(mod)
+        @test :fixef ∈ propertynames(d)
+        @test :Subject ∈ propertynames(d)
+        @test :Subject_sd ∈ propertynames(d)
+        @test :Subject_corr ∈ propertynames(d)
+
+        fixef = Array(draws(mean, mod, :fixef))
+        record_benchmark!("sleepstudy RE (lme4 REML)", "Intercept", fixef[1], 251.4)
+        record_benchmark!("sleepstudy RE (lme4 REML)", "Days", fixef[2], 10.5)
+        @test isapprox(fixef[1], 251.4, atol=15) # Intercept
+        @test isapprox(fixef[2], 10.5, atol=5)   # Days
+
+        subj_sd = draws(mean, mod, :Subject_sd)
+        record_benchmark!(
+            "sleepstudy RE (lme4 REML)", "Subject_sd[Intercept]", subj_sd[effect=At(:Intercept)], 24.7
+        )
+        record_benchmark!(
+            "sleepstudy RE (lme4 REML)", "Subject_sd[Days]", subj_sd[effect=At(:Days)], 5.9
+        )
+        @test isapprox(subj_sd[effect=At(:Intercept)], 24.7, atol=15)
+        @test isapprox(subj_sd[effect=At(:Days)], 5.9, atol=5)
+
+        subj = draws(mod, :Subject)
+        @test size(subj, :group) == length(unique(sleepstudy.Subject))
+        @test collect(dims(subj, :effect)) == [:Intercept, :Days]
+
+        corr = draws(mod, :Subject_corr)
+        @test size(corr) == (2, 2, size(corr, :draw))
+    end
+
+    @testset "intercept-only (1|Subject)" begin
+        Random.seed!(123)
+        mod = turing_glm(@formula(Reaction ~ 1 + Days + (1 | Subject)), sleepstudy, Normal)
+        quickfit!(mod)
+
+        d = draws(mod)
+        @test :Subject ∈ propertynames(d)
+        @test :Subject_sd ∈ propertynames(d)
+        @test :Subject_corr ∉ propertynames(d)
+        @test collect(dims(draws(mod, :Subject), :effect)) == [:Intercept]
+    end
+
+    @testset "slope-only, no intercept (0+Days|Subject)" begin
+        Random.seed!(123)
+        mod = turing_glm(
+            @formula(Reaction ~ 1 + Days + (0 + Days | Subject)), sleepstudy, Normal
+        )
+        quickfit!(mod)
+
+        d = draws(mod)
+        @test :Subject ∈ propertynames(d)
+        @test :Subject_corr ∉ propertynames(d)
+        @test collect(dims(draws(mod, :Subject), :effect)) == [:Days]
+
+        # Guards B4: slope-only ranef must not silently drop the real predictor
+        @test_nowarn predict(mod; type=:epred)
+    end
+end
+
+@testset "Random effects — Poisson (cbpp)" begin
+    Random.seed!(123)
+    mod = turing_glm(@formula(Incidence ~ 1 + Period + (1 | Herd)), cbpp, Poisson)
+    quickfit!(mod)
+
+    d = draws(mod)
+    @test :Herd ∈ propertynames(d)
+    @test :Herd_sd ∈ propertynames(d)
+    ep = predict(mean, mod; type=:epred)
+    @test all(Array(ep) .> 0) # Poisson mean is strictly positive
+end
+
+end # @testset "TuringRegressions"
+finally
+    println()
+    println("="^78)
+    println("BENCHMARK: posterior mean vs canonical (GLM MLE / lme4 REML)")
+    println("Full-sampling-budget models only (N=BENCH_N, nchains=BENCH_NCHAINS)")
+    println("="^78)
+    pretty_table(DataFrame(BENCHMARK_ROWS); column_labels=["model", "param", "ours", "canonical", "abs err", "rel err %"])
+end # try

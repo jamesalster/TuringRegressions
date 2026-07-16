@@ -20,8 +20,9 @@ Core loop: `turing_glm(formula, data, family)` → `fit!` → `summary`/`draws`/
 - C5. Links fixed per family (util `get_link`): Normal/TDist→identity, Bernoulli→logit, Poisson/NegBin→log.
 - C6. Model code generated Julia `Expr` at runtime, `eval`'d into `@model turing_regression`. Not hand-written. `show_code=true` prints generated source — **T5 re-verifies this path.**
 - C7. Makie plots via native package extension (`ext/TuringRegressionsMakieExt.jl`, `[weakdeps]`/`[extensions]` in Project.toml). No `Requires`, no `Colors` dep.
-- C8. NegBin canonical form: local `NegativeBinomial2(μ, mean/dispersion)`, `max(1/(1+μ/ϕ), 1e-6)`. No TuringGLM dependency (removed).
+- C8. NegBin canonical form: local `NegativeBinomial2(μ, mean/dispersion)`, `clamp(1/(1+μ/ϕ), 1e-6, 1-1e-6)` (both bounds — see V18/B2). No TuringGLM dependency (removed).
 - C9. Touch scaling logic (T3/T4) → re-verify all families against GLM (V3, V4, V13).
+- C10. `Pkg.test()` full suite is heavy — full-budget NUTS runs can take 20-30+ min. When developing/testing a new feature, write a small targeted test/script exercising only that feature; don't run the full suite. Only run full `Pkg.test()` when the user explicitly asks for it.
 
 ## §I INTERFACES (public surface)
 
@@ -92,11 +93,10 @@ Types:
 ## §B BUGS
 
 id|date|cause|fix
-B1|2026-07-16|`src/turingregression.jl` used `MCMCChains.Chains` as a qualifier but `src/TuringRegressions.jl` only did `using MCMCChains: summarize, Chains` — never bound the module name itself, so any `MCMCChains.X` reference was always an `UndefVarError`, in every env. Masked because direct-script test runs never got far enough to hit `fit!` (GLM missing from load path via legacy `[extras]`/`[targets]`, only visible to `Pkg.test()`) — only surfaced once `Pkg.test()` actually ran.|`using MCMCChains: MCMCChains, summarize, Chains`; V17
 
 ## §T TASKS
 
-T1|~|Two-pass test run: (1) all fits incl benchmark ones cheap (`BENCH_N`/`BENCH_NCHAINS` env-driven, default 300/2) — suite must run error-free, accuracy asserts may fail; (2) re-up benchmark fits to N=2000, nchains via `TR_BENCH_NCHAINS` env override maxed to `Threads.nthreads()` (was fixed 4, too slow) — fix only small/obvious benchmark-tolerance misses, no rebuild|V2,V14,I.plots
+T1|~|Two-pass test run: (1) all fits incl benchmark ones cheap (`BENCH_N`/`BENCH_NCHAINS` env-driven, default 300/2) — suite must run error-free, accuracy asserts may fail; (2) re-up benchmark fits to N=2000, nchains via `TR_BENCH_NCHAINS` env override maxed to `Threads.nthreads()` (was fixed 4, too slow) — fix only small/obvious benchmark-tolerance misses, no rebuild. **Parked 2026-07-16**: pass 1 clean (B1 fixed), pass 2 found + fixed B2 (NegativeBinomial crash), but sleepstudy correlated RE testset failure is not a small/obvious miss (see T9) — blocked on T9, then T11 to verify the rest of the suite|V2,V14,I.plots,T9,T11
 
 T2|.|README rewrite — API surface has drifted (old `fixef`/`parameters`/`get_parameters` references, TuringGLM mentions). Bring in line with current `draws`/`predict`/`summary` interface|I
 
@@ -112,8 +112,10 @@ T7|.|Swap `src/comparison.jl` off ParetoSmooth (broken, already stripped from Pr
 
 T8|.|Investigate: drop MCMCChains for FlexiChains in param extraction/`summary`. Currently `fit!` forces `chain_type=MCMCChains.Chains` (Turing 0.46 default is `FlexiChains.FlexiChain`) purely to keep every `.samples` access site (`name_map`, indexing) working w/o rewrite. Check whether native FlexiChains gives cleaner/faster param extraction (parametermethods.jl `draws`) + `summary`/`show` — its `._data`/`._metadata`/`._structures` layout may map onto `DimStack` output more directly than MCMCChains' AxisArray does. Scope: survey FlexiChains API, prototype one extraction path, compare against current before committing to a rewrite|C1,I
 
-T9|.|Investigate: full-budget NUTS on sleepstudy RE model (`Reaction ~ 1 + Days + (1+Days\|Subject)`, N=2000, nchains maxed to `Threads.nthreads()`) much slower than equivalent brms/rstan fit, same model/data. Check before trusting T1 pass-2 timing as acceptable: (a) centered vs non-centered ranef parameterisation in generated `Expr` — centered is the classic NUTS-slow culprit for hierarchical models, (b) redundant recomputation in generated model code, (c) AD backend choice, (d) whether `MCMCThreads` actually parallelises across available threads on this machine. Don't treat T1 pass-2 as done if slowness is masking a perf bug rather than genuine sampling cost|T1,C6
+T9|.|Investigate: full-budget NUTS on sleepstudy RE model (`Reaction ~ 1 + Days + (1+Days\|Subject)`, N=2000, nchains maxed to `Threads.nthreads()`) much slower than equivalent brms/rstan fit, same model/data. Check before trusting T1 pass-2 timing as acceptable: (a) centered vs non-centered ranef parameterisation in generated `Expr` — centered is the classic NUTS-slow culprit for hierarchical models, (b) redundant recomputation in generated model code, (c) AD backend choice, (d) whether `MCMCThreads` actually parallelises across available threads on this machine. Don't treat T1 pass-2 as done if slowness is masking a perf bug rather than genuine sampling cost. **T1 pass-2 confirms this is real, 2026-07-16**: at N=400/nchains=10 (2000 post-warmup draws, per user request), `correlated intercept + slope (1+Days\|Subject)` testset took **13m10s** vs 15.2s (`intercept-only`) and 35.2s (`slope-only`) — 20-50x slower, isolated to the correlated variant specifically, not RE models generally. AND coefficient recovery still fails at this budget: intercept 276.9 vs expected 251.4 (atol 15, off by 25.5), slope 4.79 vs expected 10.5 (atol 5, off by 5.7 — more than 2x too low). Slow sampling + bad recovery together on the correlated-only variant points at a real geometry/parameterisation bug, not underprovisioned draws — don't fix by loosening tolerance or adding more draws, root-cause it here first|T1,C6
 
-## §NOTE
+T10|.|`calculate_metrics(TR, metrics::Vector, fun=nothing; kwargs...)` (src/metrics.jl:35) puts the optional collapse function last — inconsistent w/ rest of package: `draws(f::Function, TR, type::Symbol)` (src/parametermethods.jl:57) puts function first, matching Julia idiom (`map(f, itr)`/`mean(f, itr)`). Change `calculate_metrics` to take `fun` first, matching `draws`. Update `default_metrics` (src/metrics.jl:124, calls `calculate_metrics` internally) + all call sites/tests|I
+
+T11|.|T1 pass-2 aborted early: `correlated intercept + slope (1+Days\|Subject)` @testset (test/runtests.jl:143) has 2 test failures, and since it's a top-level (non-nested) `@testset` with failures, Julia's `Test.jl` throws on completion — killed everything after it in `runtests.jl` (Predict, Weighted fit, model_warnings, Show/summary, benchmark table never ran). Once T9 lands a fix (or a decision to skip/loosen that one testset), run the rest of the suite and confirm it's clean end to end — don't leave it unverified just because the file happened to abort partway|T1,T9
 
 - P8: `TR.link` field (predict.jl) — used internally, V1-bounded to the 5 families, not user-facing.

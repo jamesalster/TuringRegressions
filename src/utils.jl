@@ -20,7 +20,10 @@ end
 
 # Stan-style negative binomial parameterisation, taken from TuringGLM.jl
 function NegativeBinomial2(μ::T, ϕ::T) where {T<:Real}
-    p = max(1 / (1 + μ / ϕ), 1e-6) # numerical stability
+    # clamp both bounds: unclamped upper bound lets extreme HMC proposals (μ
+    # underflowing to 0) push p exactly to 1, a non-differentiable kink in
+    # max() that gives NaN gradients and crashes NUTS (see SPEC.md B2)
+    p = clamp(1 / (1 + μ / ϕ), 1e-6, 1 - 1e-6)
     r = ϕ
     return NegativeBinomial(r, p)
 end

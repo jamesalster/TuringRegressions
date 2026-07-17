@@ -17,7 +17,7 @@ no unnecessary work in the NUTS hot path. Anything doable outside the model
 
 ## §C CONSTRAINTS
 
-- C1. Julia. Turing.jl 0.36.3 MCMC. Default sampler NUTS, parallel MCMCThreads, samples_per_chain=500, nchains=4, warmup=500.
+- C1. Julia. Turing.jl 0.36.3 MCMC. Default sampler NUTS, parallel MCMCThreads, samples=2000, nchains=4, warmup=samples (defaults to 2000). samples/warmup are totals across chains; warmup is extra, on top of samples.
 - C2. Data standardised OUTSIDE model. User priors specified on std-scale predictors (mean 0, sd 1) — permanent. No original-scale prior input or display; only clear std-scale labeling + `prior_summary(TR)`.
 - C3. Params stored `TR.parameters::DimStack`. One layer per group (`:fixef`, per-ranef `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`); each layer has dims incl `:iter, :chain` (FlexiChains names). Chains collapsible to one `:iter` via `draws(...)`.
 - C4. Families: `Normal, TDist, Bernoulli, Poisson, NegativeBinomial`. Others → `error`.
@@ -35,7 +35,7 @@ Model creation:
 - `default_prior(family)` / `default_prior(TR)` → `RegressionPrior` (intercept N(0,5), fixef N(0,2), random_effect_variance Exp(1), aux family-dep). All fields std-scale.
 
 Fitting:
-- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), samples_per_chain=nothing, samples=nothing, nchains=4, warmup=500, quiet=true, kwargs...)` mutates TR. Budget: give EITHER `samples_per_chain` (kept draws/chain) OR `samples` (total kept, split `samples ÷ nchains`, must divide evenly) — both set → `ArgumentError`; neither → 500/chain. `warmup` = extra draws/chain discarded upstream by Turing (`nadapts=warmup`, `discard_initial=warmup`), never reach `TR.samples`; `warmup=0` disables. Passes `per_chain` as `N` to Turing `sample`. Recovers unstandardised params OUTSIDE the model: `DimArray(TR.samples)` → `reshape_params` → `unstandardise` (src/reshape.jl) → `TR.parameters`. No in-model back-transform.
+- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), samples=2000, nchains=4, warmup=samples, quiet=true, kwargs...)` mutates TR. Budget: `samples` (kept draws) and `warmup` (adaptation, discarded) are TOTALS across chains, each split over `nchains` via ceil (`per_chain=cld(samples,nchains)`, `warmup_per_chain=cld(warmup,nchains)`) — rounds UP so realised count never below request. `warmup` is IN ADDITION to `samples` (each chain runs warmup_per_chain discarded + per_chain kept), default = `samples`. Discarded upstream by Turing (`nadapts`/`discard_initial`), never reaches `TR.samples`; `warmup=0` disables. Passes `per_chain` as `N` to Turing `sample`. Recovers unstandardised params OUTSIDE the model: `DimArray(TR.samples)` → `reshape_params` → `unstandardise` (src/reshape.jl) → `TR.parameters`. No in-model back-transform.
 
 Param extraction (`src/parametermethods.jl`):
 - `draws(TR; drop_warmup=0, n_draws=Inf, collapse=true)` whole `TR.parameters` DimStack, warmup dropped / chains collapsed per kwargs.
@@ -107,7 +107,7 @@ Types:
 - V21. Round-trip: `unstandardise_data(apply_transform(tf,md), tf) ≈ md` on `.predictors.X`, each `.Z[i].predictors.X`, and `.y`, across all 5 families × 3 ranef shapes.
 - V22. `posterior_predict`/`predict` never re-standardise: `TR.modeldata` stays RAW; transient `md_std` during `fit!` is local. New-data predict feeds raw X straight through.
 - V23. Ranef components (`ranef_matrix` in `_random_effects`, model.jl) must be mean-zero by construction — no free param acts as extra mean shift (would be confounded with population fixed effect over same predictor → NUTS ridge, biased marginals). Population `α`/`β` are the only mean-carrying params; ranef branches add zero-mean deviations only (`diagm(σ)*L*z_raw` or `σ.*z_raw`).
-- V24. Post-`fit!`, `size(TR.samples, 1) == per_chain` exactly (requested `samples_per_chain`, or `samples ÷ nchains`) regardless of `warmup`.
+- V24. Post-`fit!`, `size(TR.samples, 1) == cld(samples, nchains)` exactly, regardless of `warmup`. Inexact division rounds up (realised total ≥ requested `samples`).
 
 ## §B BUGS
 
@@ -117,4 +117,4 @@ id|date|cause|fix
 
 T14|.|First `using TuringRegressions` / `Pkg.test()` pays full TTFX (Turing/DynamicPPL/model-macro compile) — separate latency source from the fixed T13 gensym issue (V20). Investigate `PrecompileTools.@compile_workload` block (small `turing_glm` fit, minimal `N`/`nchains`) in `src/TuringRegressions.jl`. Open question: does it help given `construct_model`'s model type is `eval`'d at runtime (gensym'd name), not load time — workload warms builder machinery (Turing/DynamicPPL/AD) but not a reusable compiled model type. Needs a think before implementing|V20
 T17|.|`TR.link` field (predict.jl) — used internally, V1-bounded to the 5 families, not user-facing. Confirm it can stay internal / no action needed|V1
-T18|.|Revisit whether flat `DimStack` model return is needed — check if NamedTuple-of-DimArray (no auto-stack) would've been simpler/good enough before committing more code to the flat-label scheme|
+T19|.|`fit!(quiet=false)` live progress bar not showing in VSCode Julia REPL. Likely needs a progress-capable logger (TerminalLoggers) or VSCode's ProgressLogging integration. Low priority — sort later|

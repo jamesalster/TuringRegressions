@@ -15,9 +15,11 @@ using PrettyTables
 
 Random.seed!(1)
 
-# Full-sampling-budget calls read these so the benchmark can be re-run at
-# production settings (N=2000, nchains=4) via env vars, without editing tests.
-const BENCH_N = parse(Int, get(ENV, "TR_BENCH_N", "300"))
+# Full-sampling-budget calls read these so the benchmark budget can be tuned
+# via env vars without editing tests. BENCH_SAMPLES = real draws kept TOTAL
+# across chains (new `samples` API); BENCH_WARMUP = adaptation draws per chain.
+const BENCH_SAMPLES = parse(Int, get(ENV, "TR_BENCH_SAMPLES", "2000"))
+const BENCH_WARMUP = parse(Int, get(ENV, "TR_BENCH_WARMUP", "2000"))
 const BENCH_NCHAINS = parse(Int, get(ENV, "TR_BENCH_NCHAINS", "2"))
 
 @info "Setting up tests"
@@ -38,7 +40,7 @@ sleepstudy = dataset("lme4", "sleepstudy")
 cbpp = dataset("lme4", "cbpp")
 
 # small/quick fit for tests that only check API shape, not parameter recovery
-quickfit!(TR) = @suppress fit!(TR; samples_per_chain=300, nchains=2, quiet=true)
+quickfit!(TR) = @suppress fit!(TR; samples=600, warmup=1000, nchains=2, quiet=true)
 
 # Benchmark table: posterior mean vs canonical (GLM MLE / lme4 REML), full-budget
 # models only (N=BENCH_N, nchains=BENCH_NCHAINS). Printed at the end of the run — a running record
@@ -57,6 +59,14 @@ function record_benchmark!(model_name, param_name, ours, canonical)
             rel_err_pct=round(100 * abs(ours - canonical) / max(abs(canonical), 1e-8); digits=1),
         ),
     )
+end
+
+# Fit-time table: wall-clock seconds per full-budget fit. First recorded fit
+# eats TTFX compile (T14), so read the first row as an upper bound, not a like-for-like.
+const TIMING_ROWS = NamedTuple[]
+
+function record_timing!(model_name, seconds)
+    push!(TIMING_ROWS, (model=model_name, seconds=round(seconds; digits=1)))
 end
 
 try # T11: keep going through sibling testsets on failure, still print benchmark table
@@ -276,7 +286,7 @@ end
 
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
-    @suppress fit!(mod; samples_per_chain=50, nchains=1, quiet=true)
+    @suppress fit!(mod; samples=50, warmup=50, nchains=1, quiet=true)
     @test_logs (:warn,) match_mode = :any model_warnings(mod)
 end
 
@@ -284,25 +294,19 @@ end
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
 
-    # both samples_per_chain and samples set -> ArgumentError
-    @test_throws ArgumentError fit!(mod; samples_per_chain=100, samples=400, nchains=2, quiet=true)
-
-    # samples not evenly divisible by nchains -> ArgumentError
-    @test_throws ArgumentError fit!(mod; samples=101, nchains=2, quiet=true)
-
-    # samples splits evenly across chains into samples_per_chain kept draws
+    # samples splits evenly over chains: 200 total / 2 chains = 100 kept per chain
     Random.seed!(123)
-    @suppress fit!(mod; samples=200, nchains=2, warmup=10, quiet=true)
+    @suppress fit!(mod; samples=200, warmup=10, nchains=2, quiet=true)
     @test size(mod.samples, 1) == 100
 
-    # samples_per_chain kept directly, per chain
+    # inexact division rounds UP (never below request): cld(101, 2) = 51 per chain
     Random.seed!(123)
-    @suppress fit!(mod; samples_per_chain=60, nchains=2, warmup=10, quiet=true)
-    @test size(mod.samples, 1) == 60
+    @suppress fit!(mod; samples=101, warmup=10, nchains=2, quiet=true)
+    @test size(mod.samples, 1) == 51
 
-    # warmup=0 disables discarding: kept draws == samples_per_chain still
+    # warmup=0 disables discarding: kept draws unaffected
     Random.seed!(123)
-    @suppress fit!(mod; samples_per_chain=60, nchains=2, warmup=0, quiet=true)
+    @suppress fit!(mod; samples=120, warmup=0, nchains=2, quiet=true)
     @test size(mod.samples, 1) == 60
 end
 
@@ -337,7 +341,7 @@ end
     @testset "Normal" begin
         Random.seed!(123)
         mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
-        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        record_timing!("Normal (mtcars)", @elapsed @suppress fit!(mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true))
 
         glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)
         est = Array(draws(mean, mod, :fixef))
@@ -356,7 +360,7 @@ end
     @testset "Poisson" begin
         Random.seed!(123)
         mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
-        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        record_timing!("Poisson (mtcars)", @elapsed @suppress fit!(mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true))
 
         glm_mod = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink())
         est = Array(draws(mean, mod, :fixef))
@@ -374,7 +378,7 @@ end
     @testset "NegativeBinomial" begin
         Random.seed!(123)
         mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial)
-        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        record_timing!("NegativeBinomial (mtcars)", @elapsed @suppress fit!(mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true))
 
         glm_mod = GLM.glm(
             @formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink()
@@ -394,7 +398,7 @@ end
     @testset "Bernoulli" begin
         Random.seed!(123)
         mod = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic, Bernoulli)
-        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        record_timing!("Bernoulli (titanic)", @elapsed @suppress fit!(mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true))
 
         glm_mod = GLM.glm(
             @formula(Survived ~ Class + Sex + Age), titanic, Binomial(), GLM.LogitLink()
@@ -418,7 +422,7 @@ end
         mod = turing_glm(
             @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal
         )
-        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        record_timing!("sleepstudy RE (1+Days|Subject)", @elapsed @suppress fit!(mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true))
 
         d = draws(mod)
         @test :fixef ∈ propertynames(d)
@@ -496,7 +500,14 @@ finally
     println()
     println("="^78)
     println("BENCHMARK: posterior mean vs canonical (GLM MLE / lme4 REML)")
-    println("Full-sampling-budget models only (N=BENCH_N, nchains=BENCH_NCHAINS)")
+    println("Full-sampling-budget models only (samples=BENCH_SAMPLES total, warmup=BENCH_WARMUP total, nchains=BENCH_NCHAINS)")
     println("="^78)
     pretty_table(DataFrame(BENCHMARK_ROWS); column_labels=["model", "param", "ours", "canonical", "abs err", "rel err %"])
+
+    println()
+    println("="^78)
+    println("FIT TIMINGS: wall-clock seconds per full-budget fit (samples=BENCH_SAMPLES total, warmup=BENCH_WARMUP total, nchains=BENCH_NCHAINS)")
+    println("First row includes TTFX compile (T14) — treat as upper bound")
+    println("="^78)
+    pretty_table(DataFrame(TIMING_ROWS); column_labels=["model", "seconds"])
 end # try

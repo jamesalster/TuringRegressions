@@ -5,7 +5,7 @@ using TuringRegressions
 using Makie
 using Statistics: mean, median, quantile
 import TuringRegressions: lineribbon, lineribbon!, conditional_dependency, pp_check_dens, pp_check_dens_overlay, pp_check_hist
-import TuringRegressions: TuringRegression, predictors, posterior_predict
+import TuringRegressions: TuringRegression, predictors, posterior_predict, has_random_effects
 
 """
     lineribbon(x, y; widths=[0.66, 0.95], colorscale="Greys", kwargs...)
@@ -86,7 +86,9 @@ function conditional_dependency(
     end
     N = 200
     pp = predictors(TR, :fixef)
-    id = findfirst(==(string(variable)), TR.X_names)
+    var_names = collect(dims(pp, :var))
+    id = findfirst(==(string(variable)), var_names)
+    isnothing(id) && throw(ArgumentError("variable $variable not among fixed effects $(var_names)"))
     means = mean(pp; dims=1)
     predict_range = range.(extrema(pp[var = At(string(variable))])..., N)
 

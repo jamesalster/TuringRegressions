@@ -217,14 +217,14 @@ function _build_model_with_data(TR::TuringRegression)
 end
 
 function fit!(
-    TR::TuringRegression;
+    TR::TuringRegression{T};
     sampler=NUTS(),
     parallel=MCMCThreads(),
     N=2000,
     nchains=4,
     quiet=true,
     kwargs...,
-)
+) where {T}
     model_with_data = _build_model_with_data(TR)
 
     if quiet
@@ -235,13 +235,12 @@ function fit!(
 
     # Raw standardised-scale sampled params straight off the chain, stacked into
     # (iter,chain,param) with vector/matrix VarNames split into indices (`β[1]`,
-    # `L.L[2,1]`, ...) — R10, no model return statement needed. Splitting this flat
-    # array into named layers (:fixef, per-group, etc) happens here in fit! —
-    # transform.jl's `unstandardise` only does the scale math (back to original units),
-    # not the layer split. Not wired yet (T3 step 4) — interim single-layer wrap for
-    # step-4 verification.
+    # `L.L[2,1]`, ...) — R10, no model return statement needed. `reshape_params` splits
+    # this flat array into named layers (still standardised scale); `unstandardise`
+    # then back-transforms those layers to the original data scale (V10).
     raw = DimArray(TR.samples)
-    TR.parameters = DimStack((; raw=raw))
+    std_params = reshape_params(raw, TR.modeldata, T)
+    TR.parameters = unstandardise(std_params, TR.tf, TR.modeldata, T)
     return TR
 end
 

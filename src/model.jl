@@ -27,7 +27,7 @@ function _random_effects(modeldata::ModelData)
         # that share structural shape but differ only in grouping-variable name, so the
         # model cache (model_cache.jl) doesn't have to treat them as different models.
         # Real group name/levels are reattached post-hoc from TR.modeldata.Z[i] when
-        # splitting the flat sampled-VarName array into named layers (fit!/transform.jl).
+        # splitting the flat sampled-VarName array into named layers (fit!/reshape.jl).
 
         #Name parameters
         variance_ranef = Symbol("σ_z_",i)
@@ -258,7 +258,7 @@ function build_model_body(family::Type{<:Distribution}, modeldata::ModelData)
     end
 
     # No custom return: extraction reads sampled VarNames straight off the chain
-    # (`DimArray(TR.samples)`, R10) in fit!/transform.jl — see note above _pointwise_loglik.
+    # (`DimArray(TR.samples)`, R10) in fit!/reshape.jl — see note above _pointwise_loglik.
 
     return body
 end

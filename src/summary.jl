@@ -46,7 +46,7 @@ Display formatted summary table of model parameters.
 - `funs`: Summary functions to apply (default: [median, std])
 - `quantiles`: Quantiles to compute (default: [0.025, 0.975] for 95% CI)
 - `return_table`: Whether to return the summary table as NamedTuple
-- `drop_warmup`: Number of warmup draws to drop (default: 0 if fewer than 400 samples, else 200)
+- `drop_warmup`: Number of extra warmup draws to drop, on top of what `fit!` already discarded during adaptation (default: 0 — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
 - `show_metrics`: Whether to compute and display the prediction metrics table (default: false)
 - `kwargs...`: Additional arguments passed to `draws`/`default_metrics` (e.g. `n_draws`)
 """
@@ -67,7 +67,7 @@ function Base.summary(
         Symbol.(funs), [Symbol("q$(round(q*100; digits=1))") for q in quantiles]
     )
 
-    drop_warmup = something(drop_warmup, size(TR.samples, 1) < 400 ? 0 : 200)
+    drop_warmup = something(drop_warmup, 0)
 
     fixef_draws = draws(TR, :fixef; drop_warmup=drop_warmup, collapse=false, kwargs...)
     param_names = collect(dims(fixef_draws, :fixef))

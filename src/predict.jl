@@ -12,7 +12,7 @@ Passing a function (e.g. median) first aggregates the draws with that function.
 - `X` / `new_data`: predictions target (optional, uses fitted data if omitted)
 - `type`: Type of prediction (:posterior, :epred, :linpred)
 - `drop_warmup`: Number of warmup samples to drop from each chain
-- `n_draws`: Number of draws to keep (-1 for all post-warmup)
+- `n_draws`: Number of draws to keep (`Inf` for all available)
 - `collapse`: Whether to collapse chains into single dimension
 - `dropdims`: Whether to drop singleton dimensions (default: true)
 """

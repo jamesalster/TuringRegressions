@@ -206,20 +206,32 @@ end
 #### Methods ####
 
 """
-    fit!(TR::TuringRegression; sampler, parallel, N, nchains, quiet, kwargs...)
+    fit!(TR::TuringRegression; sampler, parallel, samples_per_chain, samples, nchains, warmup, quiet, kwargs...)
 
 Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passed to Turing's `sample()`.
+
+Budget: give EITHER `samples_per_chain` (kept draws per chain) OR `samples` (total kept
+draws across all chains, split evenly `samples ÷ nchains` per chain — errors if it doesn't
+divide evenly). Passing both raises `ArgumentError`. Neither given → 2000 per chain.
+
+`warmup` extra draws are sampled per chain and discarded (Turing's adaptation phase) —
+they are NOT part of the requested budget and are not returned. `warmup=0` disables this
+(all sampled draws are kept). This is independent from `drop_warmup` used downstream in
+`draws`/`summary`, which trims already-kept draws at extraction time.
 
 # Arguments
 - `sampler`: MCMC algorithm (default: NUTS())
 - `parallel`: How to parallelize chains (default: MCMCThreads())
-- `N`: Samples per chain (default: 2000)
+- `samples_per_chain`: Kept samples per chain (default: `nothing`, resolves to 500 if `samples` also unset)
+- `samples`: Total kept samples across chains (default: `nothing`). Mutually exclusive with `samples_per_chain`.
 - `nchains`: Number of chains (default: 4)
+- `warmup`: Extra draws per chain discarded during adaptation (default: 500)
 - `quiet`: Hide sampling progress (default: true)
 
 # Example
 ```julia
-fit!(model, N=1000, nchains=2)
+fit!(model, samples_per_chain=1000, nchains=2)
+fit!(model, samples=4000, nchains=4)  # 1000 kept per chain
 ```
 """
 # Slim helper (§5.3): derives the grouping arrays (n_groups/group_idx/group_predictors)
@@ -241,17 +253,30 @@ function fit!(
     TR::TuringRegression{T};
     sampler=NUTS(),
     parallel=MCMCThreads(),
-    N=2000,
+    samples_per_chain=nothing,
+    samples=nothing,
     nchains=4,
+    warmup=500,
     quiet=true,
     kwargs...,
 ) where {T}
+    !isnothing(samples_per_chain) && !isnothing(samples) &&
+        throw(ArgumentError("Pass either `samples_per_chain` or `samples`, not both."))
+
     model_with_data = _build_model_with_data(TR)
 
-    if quiet
-        TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; chain_type=VNChain, kwargs...)
+    per_chain = if !isnothing(samples)
+        samples % nchains == 0 || throw(ArgumentError("`samples` ($samples) must divide evenly by `nchains` ($nchains)."))
+        samples ÷ nchains
     else
-        TR.samples = sample(model_with_data, sampler, parallel, N, nchains; chain_type=VNChain, kwargs...)
+        something(samples_per_chain, 500)
+    end
+    # AbstractMCMC's `N` already means kept draws; `discard_initial` adds
+    # `warmup` steps on top (total steps sampled = per_chain + warmup).
+    if quiet
+        TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup, discard_initial=warmup, chain_type=VNChain, kwargs...)
+    else
+        TR.samples = sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup, discard_initial=warmup, chain_type=VNChain, kwargs...)
     end
 
     # Raw standardised-scale sampled params straight off the chain, stacked into

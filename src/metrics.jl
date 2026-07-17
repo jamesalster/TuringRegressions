@@ -19,7 +19,7 @@ your model's predictions against actual outcomes. Returns results in a table.
 - `metrics`: Vector of metric functions to calculate
 - `threshold`: Class threshold for binary classification (ignored for other models)
 - `drop_warmup`: Number of warmup samples to drop from each chain
-- `n_draws`: Number of draws to keep (-1 for all post-warmup)
+- `n_draws`: Number of draws to keep (`Inf` for all available)
 - `collapse`: Whether to collapse chains into single dimension
 - `dropdims`: Whether to drop singleton dimensions (default: true)
 

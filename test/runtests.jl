@@ -38,7 +38,7 @@ sleepstudy = dataset("lme4", "sleepstudy")
 cbpp = dataset("lme4", "cbpp")
 
 # small/quick fit for tests that only check API shape, not parameter recovery
-quickfit!(TR) = @suppress fit!(TR; N=300, nchains=2, quiet=true)
+quickfit!(TR) = @suppress fit!(TR; samples_per_chain=300, nchains=2, quiet=true)
 
 # Benchmark table: posterior mean vs canonical (GLM MLE / lme4 REML), full-budget
 # models only (N=BENCH_N, nchains=BENCH_NCHAINS). Printed at the end of the run — a running record
@@ -276,8 +276,34 @@ end
 
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
-    @suppress fit!(mod; N=50, nchains=1, quiet=true)
+    @suppress fit!(mod; samples_per_chain=50, nchains=1, quiet=true)
     @test_logs (:warn,) match_mode = :any model_warnings(mod)
+end
+
+@testset "fit! budget API (T16)" begin
+    Random.seed!(123)
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+
+    # both samples_per_chain and samples set -> ArgumentError
+    @test_throws ArgumentError fit!(mod; samples_per_chain=100, samples=400, nchains=2, quiet=true)
+
+    # samples not evenly divisible by nchains -> ArgumentError
+    @test_throws ArgumentError fit!(mod; samples=101, nchains=2, quiet=true)
+
+    # samples splits evenly across chains into samples_per_chain kept draws
+    Random.seed!(123)
+    @suppress fit!(mod; samples=200, nchains=2, warmup=10, quiet=true)
+    @test size(mod.samples, 1) == 100
+
+    # samples_per_chain kept directly, per chain
+    Random.seed!(123)
+    @suppress fit!(mod; samples_per_chain=60, nchains=2, warmup=10, quiet=true)
+    @test size(mod.samples, 1) == 60
+
+    # warmup=0 disables discarding: kept draws == samples_per_chain still
+    Random.seed!(123)
+    @suppress fit!(mod; samples_per_chain=60, nchains=2, warmup=0, quiet=true)
+    @test size(mod.samples, 1) == 60
 end
 
 @testset "Weighted fit (T10, V14)" begin
@@ -311,7 +337,7 @@ end
     @testset "Normal" begin
         Random.seed!(123)
         mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
-        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)
         est = Array(draws(mean, mod, :fixef))
@@ -330,7 +356,7 @@ end
     @testset "Poisson" begin
         Random.seed!(123)
         mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
-        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink())
         est = Array(draws(mean, mod, :fixef))
@@ -348,7 +374,7 @@ end
     @testset "NegativeBinomial" begin
         Random.seed!(123)
         mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial)
-        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.glm(
             @formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink()
@@ -368,7 +394,7 @@ end
     @testset "Bernoulli" begin
         Random.seed!(123)
         mod = turing_glm(@formula(Survived ~ Class + Sex + Age), titanic, Bernoulli)
-        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         glm_mod = GLM.glm(
             @formula(Survived ~ Class + Sex + Age), titanic, Binomial(), GLM.LogitLink()
@@ -392,7 +418,7 @@ end
         mod = turing_glm(
             @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal
         )
-        @suppress fit!(mod; N=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
+        @suppress fit!(mod; samples_per_chain=BENCH_N, nchains=BENCH_NCHAINS, quiet=true)
 
         d = draws(mod)
         @test :fixef ∈ propertynames(d)

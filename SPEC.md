@@ -17,7 +17,7 @@ no unnecessary work in the NUTS hot path. Anything doable outside the model
 
 ## §C CONSTRAINTS
 
-- C1. Julia. Turing.jl 0.36.3 MCMC. Sampler default NUTS, parallel MCMCThreads, N=2000, nchains=4.
+- C1. Julia. Turing.jl 0.36.3 MCMC. Sampler default NUTS, parallel MCMCThreads, samples_per_chain=500, nchains=4, warmup=500.
 - C2. Data standardised OUTSIDE model now (`Transform`/`standardise`, moved out under T3 step 3 — see §I Types). User priors specified on std predictors (mean 0, sd 1) — stays this way, permanently, see R14. No original-scale prior input, no original-scale prior display either (both rejected, R14). T4 shipped clear std-scale labeling + `prior_summary(TR)` only.
 - C3. Params stored/returned `TR.parameters::DimStack`. One layer per group (`:fixef`, per-ranef `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`), layer's own dims incl `:iter, :chain` (FlexiChains names, `:iter` not `:draw` since T3). Chains collapsible to one `:iter` dim via `draws(...)`.
 - C4. Families supported: `Normal, TDist, Bernoulli, Poisson, NegativeBinomial`. Others → `error`.
@@ -35,11 +35,11 @@ Model creation:
 - `default_prior(family)` / `default_prior(TR)` → `RegressionPrior` (intercept N(0,5), fixef N(0,2), random_effect_variance Exp(1), aux family-dep). All fields std-scale, permanently — T4/R14.
 
 Fitting:
-- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), samples_per_chain=2000, samples=nothing, nchains=4, warmup=200, quiet=true, kwargs...)` mutates TR (T16). Budget: give EITHER `samples_per_chain` (kept draws/chain) OR `samples` (total kept draws, split `samples ÷ nchains` per chain — overrides `samples_per_chain` when non-`nothing`, must divide evenly). `warmup` (default 200) = extra draws sampled per chain then discarded downstream by `draws`/`summary`'s `drop_warmup` (NOT discarded at sample time); `warmup=0` disables. Passes `N = per_chain + warmup` to Turing `sample`. Recovers unstandardised params OUTSIDE the model: `DimArray(TR.samples)` → `reshape_params` → `unstandardise` (src/reshape.jl) → `TR.parameters` (DimStack). No in-model back-transform (T3).
+- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), samples_per_chain=nothing, samples=nothing, nchains=4, warmup=500, quiet=true, kwargs...)` mutates TR (T16). Budget: give EITHER `samples_per_chain` (kept draws/chain) OR `samples` (total kept draws, split `samples ÷ nchains` per chain, must divide evenly) — both set → `ArgumentError`. Neither set → 500/chain. `warmup` (default 500) = extra draws sampled per chain on top of `per_chain`, discarded upstream by Turing (`nadapts=warmup`, `discard_initial=warmup`) — never reach `TR.samples`; `warmup=0` disables. Passes `per_chain` as `N` (AbstractMCMC's `N` already means kept draws; `discard_initial` adds `warmup` extra steps on top, total steps sampled = `per_chain + warmup`) to Turing `sample`. Recovers unstandardised params OUTSIDE the model: `DimArray(TR.samples)` → `reshape_params` → `unstandardise` (src/reshape.jl) → `TR.parameters` (DimStack). No in-model back-transform (T3).
 
 Param extraction (`src/parametermethods.jl`):
-- `draws(TR; drop_warmup=200, n_draws=-1, collapse=true)` whole `TR.parameters` DimStack (all layers), warmup dropped/chains collapsed per kwargs.
-- `draws(TR, type::Symbol; drop_warmup=200, n_draws=-1, collapse=true)` single layer DimArray. `type` must be one of `propertynames(TR.parameters)` else `ArgumentError`. Valid types: `:fixef`, `:{group}` (ranef effect×group), `:{group}_sd`, `:{group}_corr` (only if correlated ranef), `:{group}_offset` (only slope-only-no-intercept ranef).
+- `draws(TR; drop_warmup=0, n_draws=Inf, collapse=true)` whole `TR.parameters` DimStack (all layers), warmup dropped/chains collapsed per kwargs.
+- `draws(TR, type::Symbol; drop_warmup=0, n_draws=Inf, collapse=true)` single layer DimArray. `type` must be one of `propertynames(TR.parameters)` else `ArgumentError`. Valid types: `:fixef`, `:{group}` (ranef effect×group), `:{group}_sd`, `:{group}_corr` (only if correlated ranef), `:{group}_offset` (only slope-only-no-intercept ranef).
 - `draws(f::Function, TR, type::Symbol; dropdims=true, kwargs...)` apply reducer `f` over draw/chain dims.
 - `outcome(TR)` → DimArray of y.
 - `predictors(TR, type)` → DimArray of X (name split from old `fixed_effects`).
@@ -98,7 +98,7 @@ Types:
 - V8. `n_draws` requested beyond available post-warmup draws → `AssertionError`.
 - V9. Returned param labels: `[:α, :<X_names...>, aux...]`; `:α` always present for models with intercept.
 - V10. Standardised→original param recovery lives in `unstandardise` (src/reshape.jl) via `_scale_effects`/`_center` helpers, reading `tf::Transform` (nested `tf.fixef`, `tf.y`, `tf.ranef` LinearTransforms). Runs OUTSIDE the model, post-fit (T3 done — no back-transform in generated `@model`). `?` exact algebra + Transform field names — code is oracle, this wording is stale; T15 reconciles.
-- V11. `summary` auto `drop_warmup`: 0 if `N<400` else 200.
+- V11. `drop_warmup` default 0 (`draws()` and `summary()`) — `fit!` (T16) discards warmup upstream via `nadapts=warmup`/`discard_initial=warmup` (B1), so `TR.samples` never contains warmup draws. No auto-heuristic; downstream drop is user-override only.
 - V12. `rhat>1.05` / `ess<100` / `mcse>5%std` → `@warn`; softer thresholds → `@info`.
 - V13. Bernoulli param recovery vs GLM looser tolerance: coef atol 0.05, epred atol 0.05.
 - V14. Weighted fit with `weights ≡ 1` == unweighted fit (params equal within tolerance, SD-normalized comparison — `_weighted_likelihood`'s per-obs `@addlogprob!` loop takes different numeric NUTS path than `_likelihood`'s vectorized logpdf, not bit-identical).
@@ -110,6 +110,7 @@ Types:
 - V21. Round-trip: `unstandardise_data(apply_transform(tf,md), tf) ≈ md` holds on `.predictors.X`, each `.Z[i].predictors.X`, and `.y`, across all 5 families × 3 ranef shapes (fixef-only, ranef intercept+slope, ranef slope-only).
 - V22. `posterior_predict`/`predict` never re-standardise: `TR.modeldata` stays RAW, and any transient `md_std` built during `fit!` is local to that call. New-data predict paths must feed raw X straight through — this is a live guard against re-introducing standardisation into predict (see V15).
 - V23. Random-effect components (`ranef_matrix` in `_random_effects`, model.jl) must be mean-zero by construction — no free parameter may act as an extra mean shift, since that would be additively confounded with the population-level fixed effect covering the same predictor (only the sum is identified, producing a NUTS ridge and biased marginals — B4). Population `α`/`β` are the only mean-carrying params; ranef branches only add zero-mean deviations (`diagm(σ)*L*z_raw` or `σ.*z_raw`).
+- V24. Post-`fit!`, `size(TR.samples, 1) == per_chain` exactly (the requested `samples_per_chain`, or `samples ÷ nchains`) regardless of `warmup` — warmup draws never land in `TR.samples` (B1).
 
 ## §R RESEARCH
 
@@ -122,10 +123,11 @@ R13|T13 cache-key scope, priors|priors are NOT passed as runtime args to the com
 ## §B BUGS
 
 id|date|cause|fix
+B1|2026-07-17|`fit!` passed `N=per_chain+warmup` to Turing `sample()`, assuming `N` meant total draws with warmup subtracted via `discard_initial`/`nadapts`. AbstractMCMC's `N` already means KEPT draws — `discard_initial` adds warmup on top, not subtracted from `N`. Caught by scratch test asserting `size(mod.samples,1)==samples_per_chain` after fit, which returned per_chain+warmup instead|V11 (pass `per_chain` as `N`, `discard_initial=warmup`)
 
 ## §T TASKS
 
-T16|.|`fit!` budget API (independent of T4/T5, src/turingregression.jl:219-233 + docstring 188-201). Rename `N`→`samples_per_chain`; add `samples=nothing` (total kept, `samples ÷ nchains` per chain when set, error if not evenly divisible) and `warmup=200`. Pass `N = per_chain + warmup` to `sample(...)`. Docstring: state 200 warmup added by default, discarded downstream via `drop_warmup`, `warmup=0` to disable. Downstream `drop_warmup=200` defaults UNCHANGED (warmup kept in chain, dropped at extraction)|I,V11
+T16|x|`fit!` budget API (independent of T4/T5, src/turingregression.jl:219-233 + docstring 188-201). Rename `N`→`samples_per_chain` (default `nothing`, resolves 500); add `samples=nothing` (total kept, `samples ÷ nchains` per chain when set, error if not evenly divisible; `ArgumentError` if both `samples_per_chain` and `samples` set) and `warmup=500`. Pass `per_chain` as `N` (already means kept draws to AbstractMCMC), `discard_initial=warmup` adds warmup steps on top — B1 caught `N=per_chain+warmup` double-counting warmup, fixed. Docstring: state warmup discarded upstream via Turing's `nadapts`/`discard_initial`, `warmup=0` to disable. Downstream `drop_warmup` default now 0 (draws()/summary()) — warmup discarded upstream by Turing, not kept in chain|I,V11
 
 T5|.|Re-verify model code-gen (`show_code`, model.jl generated `Expr`) after T3/T4 land, since both touch generated-model internals. FOLD IN: collapse `_likelihood` + `_weighted_likelihood` (currently ~90% duplicated) into one family-dispatched function, with `weights` defaulting to `ones(...)` so unweighted fit is just weighted-fit-with-1s (makes V14 a true structural guarantee, not a coincidence)|C6,V14
 

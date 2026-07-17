@@ -1,12 +1,14 @@
 
 
 # Utility function for selecting draws and collapsing chains from a samples AxisArray
-function _process_draws(DA::Union{DimArray, DimStack}; drop_warmup::Int=200, n_draws::Int=-1, collapse::Bool=true)
+function _process_draws(DA::Union{DimArray, DimStack}; drop_warmup::Int=0, n_draws::Real=Inf, collapse::Bool=true)
     # Drop warmup
     arr = DA[iter=(drop_warmup + 1):size(DA, :iter)]
-    @assert n_draws <= size(arr, :iter) "$n_draws draws is too many from $(size(arr, :iter)) available. Note that n_draws is applied per chain."
     # Select draws
-    arr = n_draws > 0 ? arr[iter=1:n_draws] : arr
+    if isfinite(n_draws)
+        @assert n_draws <= size(arr, :iter) "$n_draws draws is too many from $(size(arr, :iter)) available. Note that n_draws is applied per chain."
+        arr = arr[iter=1:Int(n_draws)]
+    end
     # Collapse
     arr = collapse ? mergedims(arr, (:iter, :chain) => :iter) : arr
     @assert size(arr, :iter) > 0 "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
@@ -28,17 +30,17 @@ function _aggregate_draws(f::Function, arr::DimArray; dropdims=true)
 end
 
 """
-    draws(TR::TuringRegression, type::Symbol; drop_warmup=200, n_draws=-1, collapse=true)
-    draws(f::Function, TR::TuringRegression, type::Symbol; dropdims=true, drop_warmup=200, n_draws=-1, collapse=true)
-    draws(TR::TuringRegression; drop_warmup=200, n_draws=-1, collapse=true)
+    draws(TR::TuringRegression, type::Symbol; drop_warmup=0, n_draws=Inf, collapse=true)
+    draws(f::Function, TR::TuringRegression, type::Symbol; dropdims=true, drop_warmup=0, n_draws=Inf, collapse=true)
+    draws(TR::TuringRegression; drop_warmup=0, n_draws=Inf, collapse=true)
 
 Extract specific draws from fitted model as `DimArray` (or `DimStack` if `type` is not passed).
 Passing a function (e.g. median) aggregates the draws with that function.
 
 # Arguments
 - `type`: Symbol for the type of draw. Can be `:fixef`, :`{ranef_name}`, :{ranef_name}_sd`, `:{group_name}_corr`, `:internals`
-- `drop_warmup`: Number of warmup samples to drop from each chain. (default is `200`)
-- `n_draws`: Number of draws to keep (default is -1 for all post-warmup)
+- `drop_warmup`: Number of extra warmup samples to drop from each chain, on top of what `fit!` already discarded during Turing's adaptation phase (default is `0` — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
+- `n_draws`: Number of draws to keep (default is `Inf` for all available draws)
 - `collapse`: Whether to collapse chains into single dimension (default is `true`)
 - `dropdims`: Whether to drop dims over which (default is `true`)
 """

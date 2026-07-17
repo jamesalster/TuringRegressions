@@ -1,17 +1,4 @@
 """
-Flags describing model structure.
-
-Tracks which components are present: intercept, fixed effects, 
-random effects, and whether sampling weights are used.
-"""
-struct ModelInfo
-    has_intercept::Bool
-    has_fixed_effects::Bool
-    has_random_effects::Bool
-    weighted::Bool
-end
-
-"""
 A Bayesian regression model fitted with Turing.jl.
 
 Stores the formula, data, priors, and MCMC samples. The type parameter 
@@ -29,16 +16,18 @@ mutable struct TuringRegression{T<:Distribution} <: RegressionModel
     model::Function
     prior::RegressionPrior
     link::Function
-    y::AbstractVector
-    X::AbstractMatrix
-    z::Union{Nothing,Vector{RandomEffect}}
-    weights::Union{Nothing,Vector{Float64}}
-    X_names::Union{Nothing,Vector{String}}
-    modelinfo::ModelInfo
+    modeldata::ModelData
+    tf::Transform
     modelcode::Expr
-    samples::Union{Nothing,Chains}
+    samples::Union{Nothing,VNChain}
     parameters::Union{Nothing,DimStack}
 end
+
+# Derived flags — mirror the ModelData accessors (formula_handlers.jl) for the fitted TR.
+has_intercept(TR::TuringRegression) = has_intercept(TR.modeldata)
+has_fixed_effects(TR::TuringRegression) = has_fixed_effects(TR.modeldata)
+has_random_effects(TR::TuringRegression) = has_random_effects(TR.modeldata)
+is_weighted(TR::TuringRegression) = is_weighted(TR.modeldata)
 
 """
     turing_glm(formula, data, family; priors, weights, show_code)
@@ -73,32 +62,21 @@ function turing_glm(formula::FormulaTerm,
         error("Family: $(string(family)) not supported.")
     end
 
-    # Get data arrays. `schema_formula` is `formula` with schema/contrasts baked in —
+    # Get data arrays. `modeldata.f` is `formula` with schema/contrasts baked in —
     # stored on TR and reused by posterior_predict(TR, new_data::DataFrame) so grouping levels /
     # categorical contrasts are never re-derived from (possibly small/partial) new data.
-    y, X, Z, formula_with_schema = extract_model_data(formula, data)
+    modeldata = extract_model_data(formula, data, weights)
+    _, tf = standardise(modeldata, family)
 
-    # Make model info
-    model_info = ModelInfo(
-        has_intercept(formula),
-        size(X, 2) > 0,
-        !isnothing(Z),
-        !isnothing(weights)
-    )
-
-    model_obj, model_code = cached_construct_model(family, model_info, Z, priors, show_code)
+    model_obj, model_code = cached_construct_model(family, modeldata, show_code)
 
     return TuringRegression{family}(
-        formula_with_schema,
+        modeldata.f,
         model_obj,
         priors,
         get_link(family),
-        y,
-        X,
-        Z,
-        weights,
-        get_fixef_names(formula, data),
-        model_info,
+        modeldata,
+        tf,
         model_code,
         nothing,
         nothing
@@ -166,7 +144,7 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
     println(io, normal_style, clean_prior_string(string(pr.intercept)))
     print(io, normal_style, "  Fixed Effects: ")
     println(io, normal_style, clean_prior_string(string(pr.fixed_effects)))
-    if TR.modelinfo.has_random_effects
+    if has_random_effects(TR)
         print(io, normal_style, "  Random Effects: ")
         println(io, normal_style, clean_prior_string(string(pr.random_effects)))
     end
@@ -186,15 +164,15 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
 
     # Observations
     print(io, label_style, "Observations: ")
-    println(io, normal_style, size(TR.X, 1))
+    println(io, normal_style, size(TR.modeldata.predictors.X, 1))
 
     # Samples
     print(io, label_style, "Samples: ")
     if isnothing(TR.samples)
         println(io, normal_style, "empty")
     else
-        sz = size(TR.samples)
-        println(io, normal_style, "$(sz[1] * sz[3]) samples across $(sz[3]) chains")
+        sz = size(TR.samples)  # FlexiChain: (iter, chain)
+        println(io, normal_style, "$(sz[1] * sz[2]) samples across $(sz[2]) chains")
     end
 
     if warnings
@@ -205,38 +183,6 @@ end
 
 
 #### Methods ####
-
-"""
-    _build_model_with_data(TR::TuringRegression)
-
-Build the DynamicPPL model conditioned on TR's data (y, X, random-effect
-grouping structures, weights as applicable). Return the conditioned model.
-"""
-function _build_model_with_data(TR::TuringRegression)
-    # Prepare random effect data structures
-    if TR.modelinfo.has_random_effects
-        n_gr = zeros(Int, length(TR.z))
-        group_idx = zeros(Int, size(first(TR.z).predictors, 1), length(TR.z))
-        group_predictors = Vector{Matrix{Float64}}(undef, length(TR.z))
-
-        for (i, ranef) in enumerate(TR.z)
-            n_gr[i] = length(ranef.levels)
-            group_idx[:,i] = ranef.level_index
-            group_predictors[i] = ranef.predictors #this is an empty matrix if no fixed effects for the ranef
-        end
-    end
-
-    # Call model function
-    if TR.modelinfo.has_random_effects & TR.modelinfo.weighted
-        return TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors, TR.weights)
-    elseif TR.modelinfo.has_random_effects
-        return TR.model(TR.y, TR.X, n_gr, group_idx, group_predictors)
-    elseif TR.modelinfo.weighted
-        return TR.model(TR.y, TR.X, TR.weights)
-    else
-        return TR.model(TR.y, TR.X)
-    end
-end
 
 """
     fit!(TR::TuringRegression; sampler, parallel, N, nchains, quiet, kwargs...)
@@ -255,108 +201,46 @@ Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passe
 fit!(model, N=1000, nchains=2)
 ```
 """
+# Slim helper (§5.3): derives the grouping arrays (n_groups/group_idx/group_predictors)
+# from ModelData.Z once, then calls the model with its unpacked-argument signature.
+# Shared with psis_loo (comparison.jl), which needs the same conditioned model.
+function _build_model_with_data(TR::TuringRegression)
+    md = apply_transform(TR.tf, TR.modeldata)
+    Z = md.Z
+    n_groups = [length(re.levels) for re in Z]
+    group_idx = isempty(Z) ? Matrix{Int}(undef, length(md.y), 0) : reduce(hcat, (re.level_index for re in Z))
+    group_predictors = [re.predictors.X for re in Z]
+    weights = something(md.weights, ones(length(md.y)))
+    pr = TR.prior
+    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights,
+        pr.intercept, pr.fixed_effects, pr.random_effects, pr.auxiliary)
+end
+
 function fit!(
-    TR::TuringRegression;
+    TR::TuringRegression{T};
     sampler=NUTS(),
     parallel=MCMCThreads(),
     N=2000,
     nchains=4,
     quiet=true,
     kwargs...,
-)
+) where {T}
     model_with_data = _build_model_with_data(TR)
 
-    # Sample. chain_type forced to MCMCChains.Chains: newer Turing defaults to
-    # FlexiChains.FlexiChain, whose internals (._data/._metadata/._structures) are
-    # incompatible with every .samples access site elsewhere in this package
-    # (name_map, indexing, etc). Forcing Chains keeps the rest of the package working
-    # without a rewrite.
     if quiet
-        TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; chain_type=MCMCChains.Chains, kwargs...)
+        TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; chain_type=VNChain, kwargs...)
     else
-        TR.samples = sample(model_with_data, sampler, parallel, N, nchains; chain_type=MCMCChains.Chains, kwargs...)
+        TR.samples = sample(model_with_data, sampler, parallel, N, nchains; chain_type=VNChain, kwargs...)
     end
 
-    # Recover standardised parameters from generated quantities, thanks to claude
-    gq = generated_quantities(model_with_data, TR.samples)
-    param_names = filter(!=(:loglik), collect(keys(first(gq))))
-    param_names = :α ∈ param_names ? [:α; filter(!=(:α), param_names)] : param_names
-
-    # Extract all parameters in one pass
-    param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
-                    for p in param_names)
-
-    draw_dim = Dim{:draw}(axes(gq, 1))
-    chain_dim = Dim{:chain}(axes(gq, 2))
-
-    # :fixef layer — α, β, aux params (unchanged content/shape from before T1)
-    fixef_arrays = []
-    fixef_labels = Symbol[]
-    for param in filter(p -> !occursin("_z_", string(p)), param_names)
-        if param === :β
-            arr = stack(param_dict[param])
-            push!(fixef_arrays, arr)
-            append!(fixef_labels, Symbol.(TR.X_names))
-        else
-            push!(fixef_arrays, reshape(param_dict[param], 1, size(param_dict[param])...))
-            push!(fixef_labels, param)
-        end
-    end
-    fixef_arr = DimArray(vcat(fixef_arrays...), (Dim{:fixef}(fixef_labels), draw_dim, chain_dim))
-
-    layers = Dict{Symbol,Any}(:fixef => fixef_arr)
-
-    # One layer per random-effect grouping term
-    for re in (TR.modelinfo.has_random_effects ? TR.z : RandomEffect[])
-        group = re.variable
-        intercept_sym = Symbol("α_z_", group)
-        beta_sym = Symbol("β_z_", group)
-        sd_sym = Symbol("σ_z_", group)
-        R_sym = Symbol("R_z_", group)
-        offset_sym = Symbol("offset_z_", group)
-
-        effect_names = Symbol[]
-        re.has_intercept && push!(effect_names, :Intercept)
-        re.has_fixed_effects && append!(effect_names, Symbol.(re.predictor_names))
-
-        # Main layer: (effect, group, draw, chain)
-        if re.has_intercept & re.has_fixed_effects
-            combined = [vcat(reshape(param_dict[intercept_sym][i, j], 1, :), param_dict[beta_sym][i, j])
-                        for i in axes(gq, 1), j in axes(gq, 2)]
-            main_arr = stack(combined)
-        elseif re.has_fixed_effects
-            main_arr = stack(param_dict[beta_sym])
-        else # re.has_intercept only
-            combined = [reshape(param_dict[intercept_sym][i, j], 1, :) for i in axes(gq, 1), j in axes(gq, 2)]
-            main_arr = stack(combined)
-        end
-        layers[group] = DimArray(main_arr, (Dim{:effect}(effect_names), Dim{:group}(re.levels), draw_dim, chain_dim))
-
-        # :<group>_sd layer — back-transformed group-level SDs, one per effect
-        sd_arr = stack(param_dict[sd_sym])
-        layers[Symbol(group, "_sd")] = DimArray(sd_arr, (Dim{:effect}(effect_names), draw_dim, chain_dim))
-
-        # :<group>_corr layer — only when correlated (full L*L' per draw)
-        if R_sym ∈ param_names
-            corr_arr = stack(param_dict[R_sym])
-            layers[Symbol(group, "_corr")] = DimArray(
-                corr_arr, (Dim{:effect}(effect_names), Dim{:effect2}(effect_names), draw_dim, chain_dim)
-            )
-        end
-
-        # :<group>_offset layer — only for slope-only-no-intercept terms, hidden from user-facing accessors
-        if offset_sym ∈ param_names
-            offset_arr = stack(param_dict[offset_sym])
-            layers[Symbol(group, "_offset")] = DimArray(offset_arr, (Dim{:group}(re.levels), draw_dim, chain_dim))
-        end
-    end
-
-    # Internals
-    internals_names = TR.samples.name_map[:internals]
-    layers[:internals] = DimArray(permutedims(TR.samples[internals_names].value, (2, 1, 3)),
-        (Dim{:internal}(internals_names), Dim{:draw}, Dim{:chain}))
-
-    TR.parameters = DimStack(NamedTuple(layers))
+    # Raw standardised-scale sampled params straight off the chain, stacked into
+    # (iter,chain,param) with vector/matrix VarNames split into indices (`β[1]`,
+    # `L.L[2,1]`, ...) — R10, no model return statement needed. `reshape_params` splits
+    # this flat array into named layers (still standardised scale); `unstandardise`
+    # then back-transforms those layers to the original data scale (V10).
+    raw = DimArray(TR.samples)
+    std_params = reshape_params(raw, TR.modeldata, T)
+    TR.parameters = unstandardise(std_params, TR.tf, TR.modeldata, T)
     return TR
 end
 

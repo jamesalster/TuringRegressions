@@ -26,20 +26,23 @@ using Random
 using StatisticalMeasures
 using PosteriorStats: loo, compare
 using MCMCDiagnosticTools
-using MCMCChains: MCMCChains, summarize, Chains
+using FlexiChains: FlexiChains, VNChain
+using DynamicPPL: getsym
 
 using MacroTools: prettify
 using Suppressor: @suppress
-using StatsBase: mean, std, cov, CoefTable
+import StatsBase: StatsBase, mean, std, cov, CoefTable, ZScoreTransform, fit, transform
 using DataFrames: DataFrame
 using Tables: columntable
-using LinearAlgebra: I, dot, Symmetric, diagm, diag
+using LinearAlgebra: I, dot, Symmetric, diagm, diag, Diagonal
 using CategoricalArrays: categorical
 using CategoricalDistributions: UnivariateFinite
 using MixedModels: _ranef_refs
 
 include("prior.jl")
 include("formula_handlers.jl")
+include("transform.jl")
+include("reshape.jl")
 include("turingregression.jl")
 include("model.jl")
 include("model_cache.jl")

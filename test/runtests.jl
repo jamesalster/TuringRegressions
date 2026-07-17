@@ -1,7 +1,6 @@
 using TuringRegressions
 using Test
 using RDatasets
-using MCMCChains
 using StatsModels
 using StatsBase: mean, std, var, CoefTable
 using Suppressor: @suppress
@@ -70,7 +69,7 @@ try # T11: keep going through sibling testsets on failure, still print benchmark
 
     @testset "call forms" begin
         @test_nowarn posterior_predict(mod) # fitted data
-        @test_nowarn posterior_predict(mod, mod.X) # matrix
+        @test_nowarn posterior_predict(mod, mod.modeldata.predictors.X) # matrix
         new_data = mtcars[1:5, :]
         @test_nowarn posterior_predict(mod, new_data) # new DataFrame
     end
@@ -121,7 +120,7 @@ end
     @test size(vcov(mod)) == (3, 3)
     @test size(confint(mod)) == (3, 2)
     @test coeftable(mod) isa CoefTable
-    @test response(mod) == mod.y
+    @test response(mod) == mod.modeldata.y
     @test isapprox(residuals(mod), response(mod) .- fitted(mod))
 
     # predict (StatsAPI point estimate) vs posterior_predict (full posterior, primary API)
@@ -422,7 +421,7 @@ end
         @test collect(dims(subj, :effect)) == [:Intercept, :Days]
 
         corr = draws(mod, :Subject_corr)
-        @test size(corr) == (2, 2, size(corr, :draw))
+        @test size(corr) == (2, 2, size(corr, :iter))
     end
 
     @testset "intercept-only (1|Subject)" begin

@@ -23,11 +23,11 @@ function _predict_fn(type::Symbol)
     throw(ArgumentError("type must be one of :posterior, :epred or :linpred"))
 end
 
-# Grouping info for random effects: fitted data reuses TR.z, a bare X matrix carries no
-# grouping info to reconstruct it from.
+# Grouping info for random effects: fitted data reuses TR.modeldata.Z, a bare X matrix
+# carries no grouping info to reconstruct it from.
 function _resolve_z(TR::TuringRegression, X::AbstractArray)
-    !TR.modelinfo.has_random_effects && return nothing
-    X === TR.X && return TR.z
+    !has_random_effects(TR) && return nothing
+    X === TR.modeldata.predictors.X && return TR.modeldata.Z
     error(
         "posterior_predict() with a raw design matrix does not support random-effects models " *
         "(no grouping information available). Use posterior_predict(TR) for fitted data or " *
@@ -35,11 +35,11 @@ function _resolve_z(TR::TuringRegression, X::AbstractArray)
     )
 end
 
-function posterior_predict(TR::TuringRegression, X::AbstractArray=TR.X; type::Symbol=:posterior, kwargs...)
+function posterior_predict(TR::TuringRegression, X::AbstractArray=TR.modeldata.predictors.X; type::Symbol=:posterior, kwargs...)
     return _predict_fn(type)(TR, X, _resolve_z(TR, X); kwargs...)
 end
 
-function posterior_predict(f::Function, TR::TuringRegression, X::AbstractArray=TR.X; type::Symbol=:posterior, kwargs...)
+function posterior_predict(f::Function, TR::TuringRegression, X::AbstractArray=TR.modeldata.predictors.X; type::Symbol=:posterior, kwargs...)
     return _predict_fn(type)(f, TR, X, _resolve_z(TR, X); kwargs...)
 end
 
@@ -47,67 +47,18 @@ function posterior_predict(
     TR::TuringRegression, new_data::DataFrame;
     type::Symbol=:posterior, allow_new_levels::Bool=false, kwargs...,
 )
-    _, X, _ = extract_model_data(TR.formula, new_data)
-    z = new_random_effects(TR, new_data; allow_new_levels)
-    return _predict_fn(type)(TR, X, z; kwargs...)
+    md_new = extract_model_data(TR.formula, new_data)
+    z = new_random_effects(TR.modeldata, new_data; allow_new_levels)
+    return _predict_fn(type)(TR, md_new.predictors.X, z; kwargs...)
 end
 
 function posterior_predict(
     f::Function, TR::TuringRegression, new_data::DataFrame;
     type::Symbol=:posterior, allow_new_levels::Bool=false, kwargs...,
 )
-    _, X, _ = extract_model_data(TR.formula, new_data)
-    z = new_random_effects(TR, new_data; allow_new_levels)
-    return _predict_fn(type)(f, TR, X, z; kwargs...)
-end
-
-"""
-    new_random_effects(TR::TuringRegression, new_data; allow_new_levels=false)
-
-Rebuild ranef structure for `new_data` via `extract_model_data` (same path used at fit
-time), then remap each grouping level onto `TR.z`'s original level order/index.
-
-By default errors clearly if `new_data` contains a grouping level not seen during
-fitting. With `allow_new_levels=true`, unseen levels get a `@warn` and are marked (level
-index `0`) so `posterior_predict` uses the population-mean (zero) random effect for those rows,
-instead of erroring.
-"""
-function new_random_effects(TR::TuringRegression, new_data; allow_new_levels::Bool=false)
-    isnothing(TR.z) && return nothing
-    _, _, Z_new = extract_model_data(TR.formula, new_data)
-    return [
-        _remap_levels(re_new, re_orig; allow_new_levels) for
-        (re_new, re_orig) in zip(Z_new, TR.z)
-    ]
-end
-
-# Sentinel level index 0 (never a valid 1-based level) marks an unseen level.
-function _remap_levels(re_new::RandomEffect, re_orig::RandomEffect; allow_new_levels::Bool=false)
-    unseen = Any[]
-    level_index = map(re_new.level_index) do i
-        key = re_new.levels[i]
-        idx = findfirst(==(key), re_orig.levels)
-        if !isnothing(idx)
-            idx
-        elseif allow_new_levels
-            push!(unseen, key)
-            0
-        else
-            error(
-                "predict: unseen level '$key' for grouping variable :$(re_orig.variable) — " *
-                "all grouping levels must have been present when the model was fitted. " *
-                "Pass allow_new_levels=true to use population-mean random effects for new levels.",
-            )
-        end
-    end
-    if !isempty(unseen)
-        @warn "predict: unseen level(s) for grouping variable :$(re_orig.variable); using population-mean (zero) random effect for these rows." levels =
-            unique(unseen)
-    end
-    return RandomEffect(
-        re_orig.variable, re_orig.levels, level_index, re_new.predictors,
-        re_new.predictor_names, re_new.has_intercept, re_new.has_fixed_effects,
-    )
+    md_new = extract_model_data(TR.formula, new_data)
+    z = new_random_effects(TR.modeldata, new_data; allow_new_levels)
+    return _predict_fn(type)(f, TR, md_new.predictors.X, z; kwargs...)
 end
 
 #### Internal functions ####
@@ -119,8 +70,8 @@ function _add_random_effects!(μ::AbstractArray, TR::TuringRegression, z::Vector
     for re in z
         layer = Array(draws(TR, re.variable; kwargs...))
         effect_names = collect(dims(TR.parameters[re.variable], :effect))
-        intercept_pos = re.has_intercept ? findfirst(==(:Intercept), effect_names) : nothing
-        slope_positions = re.has_fixed_effects ? findall(!=(:Intercept), effect_names) : Int[]
+        intercept_pos = re.predictors.has_intercept ? findfirst(==(:Intercept), effect_names) : nothing
+        slope_positions = has_fixed_effects(re.predictors) ? findall(!=(:Intercept), effect_names) : Int[]
         for c in 1:size(μ, 3), r in axes(μ, 1)
             g = re.level_index[r]
             g == 0 && continue
@@ -128,7 +79,7 @@ function _add_random_effects!(μ::AbstractArray, TR::TuringRegression, z::Vector
                 μ[r, :, c] .+= layer[intercept_pos, g, :, c]
             end
             for (k, pos) in enumerate(slope_positions)
-                μ[r, :, c] .+= re.predictors[r, k] .* layer[pos, g, :, c]
+                μ[r, :, c] .+= re.predictors.X[r, k] .* layer[pos, g, :, c]
             end
         end
     end
@@ -144,26 +95,26 @@ function linpred(
 )
     # Get relevant parameters
     fixef_draws = draws(TR, :fixef; kwargs...)
-    if TR.modelinfo.has_fixed_effects
-        β = fixef_draws[fixef=At(Symbol.(TR.X_names))]
+    if has_fixed_effects(TR)
+        β = fixef_draws[fixef=At(Symbol.(TR.modeldata.predictors.X_names))]
         ndraws = size(β, 2)
         nchains = size(β, 3)
     end
-    if TR.modelinfo.has_intercept
+    if has_intercept(TR)
         α = fixef_draws[fixef=At([:α])]
         ndraws = size(α, 2)
         nchains = size(α, 3)
     end
 
     # Initialise linear model output
-    μ = zeros((Dim{:row}(size(X, 1)), Dim{:draw}(ndraws), Dim{:chain}(nchains)))
+    μ = zeros((Dim{:row}(size(X, 1)), Dim{:iter}(ndraws), Dim{:chain}(nchains)))
 
     # loop over chains for dot product vectorisation
     for i in 1:size(μ, 3)
-        if TR.modelinfo.has_fixed_effects
+        if has_fixed_effects(TR)
             μ[:, :, i] .+= X * β[:, :, i]
         end
-        if TR.modelinfo.has_intercept
+        if has_intercept(TR)
             μ[:, :, i] .+= vec(α[:, :, i])'
         end
     end

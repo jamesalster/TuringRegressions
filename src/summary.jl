@@ -35,7 +35,6 @@ function _diagnostics_table(arr, labels, funs, func_names_all, quantiles)
     )
 end
 
-# build on MCMCChains.summarize
 """
     summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_warmup=nothing, kwargs...)
 
@@ -104,8 +103,8 @@ function Base.summary(
         ],
         default_options...,
     )
-    if TR.modelinfo.has_random_effects
-        for re in TR.z
+    if has_random_effects(TR)
+        for re in TR.modeldata.Z
             group = re.variable
 
             level_draws = draws(TR, group; drop_warmup=drop_warmup, collapse=false, kwargs...)
@@ -220,15 +219,38 @@ function model_warnings(chain_info)
     end
 end
 
+# Merge every non-(iter,chain) dim of a layer into one leading axis, so each row is
+# one scalar sampled parameter's (iter,chain) trace — same shape _diagnostics_table
+# expects, generalised to layers that carry more than one non-`:fixef`/`:effect` dim
+# (e.g. `:{group}_corr`'s `effect`×`effect2`).
+function _flatten_layer(arr)
+    iter_chain = (dimnum(arr, :iter), dimnum(arr, :chain))
+    other = setdiff(1:ndims(arr), iter_chain)
+    permuted = permutedims(Array(arr), (other..., iter_chain...))
+    return reshape(permuted, :, size(permuted, ndims(permuted) - 1), size(permuted, ndims(permuted)))
+end
+
 """
     model_warnings(TR::TuringRegression)
 
-Display info and warnings about model fit. Based on `MCMCChains.summarize`
+Display info and warnings about model fit, computed directly off `TR.parameters`
+(rhat/ess/mcse work on plain `(param,iter,chain)` arrays, no chain-object API needed).
 """
 function model_warnings(TR::TuringRegression)
     isnothing(TR.samples) && return nothing
-    chain_info = summarize(TR.samples; sections=:parameters)
-    model_warnings(chain_info.nt)
+    stds, mcses, ess_bulks, ess_tails, rhats = Float64[], Float64[], Float64[], Float64[], Float64[]
+    for name in propertynames(TR.parameters)
+        flat = _flatten_layer(TR.parameters[name])
+        for i in axes(flat, 1)
+            data = flat[i, :, :]
+            push!(stds, std(vec(data)))
+            push!(mcses, mcse(data))
+            push!(ess_bulks, ess(data))
+            push!(ess_tails, ess(data; kind=:tail))
+            push!(rhats, rhat(data))
+        end
+    end
+    model_warnings((; std=stds, mcse=mcses, ess_bulk=ess_bulks, ess_tail=ess_tails, rhat=rhats))
 end
 
 # Highlighters

@@ -128,68 +128,46 @@ function _linear_model(modeldata::ModelData)
     return quote μ = $rhs end
 end
 
-# likelihood
-function _likelihood(family::Type{<:Distribution})
-    if family == Normal
-        quote
-            Turing.@addlogprob! logpdf(MvNormal(μ, σ), y)
-        end
-    elseif family == TDist
-        quote
-            Turing.@addlogprob! logpdf(arraydist((μ) .+ σ .* TDist.(ν)), y)
-        end
-    elseif family == Bernoulli
-        quote
-            for n in 1:nobs
-                Turing.@addlogprob! logpdf(BernoulliLogit(μ[n]), y[n]) #Not scaled
-            end
-        end
+# per-observation logpdf expr, shared weighted/unweighted (loop-based families only)
+function _obs_logpdf(family::Type{<:Distribution})
+    if family == Bernoulli
+        :(logpdf(BernoulliLogit(μ[n]), y[n])) #Not scaled
     elseif family == Poisson
-        quote
-            for n in 1:nobs
-                Turing.@addlogprob! logpdf(LogPoisson(μ[n]), y[n]) #Not scaled
-            end
-        end
+        :(logpdf(LogPoisson(μ[n]), y[n])) #Not scaled
     elseif family == NegativeBinomial
-        quote
-            for n in 1:nobs
-                Turing.@addlogprob! logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) #Not scaled
-            end
-        end
+        :(logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n])) #Not scaled
     end
 end
 
-# weighted likelihood
-function _weighted_likelihood(family::Type{<:Distribution})
-    if family == Normal
-        quote
+# likelihood. weighted picked at construct-time, not inside NUTS hot path.
+function _likelihood(family::Type{<:Distribution}, weighted::Bool)
+    if !weighted && family == Normal
+        return quote
+            Turing.@addlogprob! logpdf(MvNormal(μ, σ), y)
+        end
+    elseif !weighted && family == TDist
+        return quote
+            Turing.@addlogprob! logpdf(arraydist((μ) .+ σ .* TDist.(ν)), y)
+        end
+    elseif weighted && family == Normal
+        return quote
             for n in 1:nobs
                 Turing.@addlogprob! weights[n] * logpdf(Normal(μ[n], σ), y[n])
             end
         end
-    elseif family == TDist
-        quote
+    elseif weighted && family == TDist
+        return quote
             for n in 1:nobs
                 Turing.@addlogprob! weights[n] * logpdf(μ[n] + σ * TDist(ν), y[n])
             end
         end
-    elseif family == Bernoulli
-        quote
-            for n in 1:nobs
-                Turing.@addlogprob! weights[n] * logpdf(BernoulliLogit(μ[n]), y[n])
-            end
-        end
-    elseif family == Poisson
-        quote
-            for n in 1:nobs
-                Turing.@addlogprob! weights[n] * logpdf(LogPoisson(μ[n]), y[n])
-            end
-        end
-    elseif family == NegativeBinomial
-        quote
-            for n in 1:nobs
-                Turing.@addlogprob! weights[n] * logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) #Not scaled
-            end
+    end
+
+    obs = _obs_logpdf(family)
+    term = weighted ? :(weights[n] * $obs) : obs
+    quote
+        for n in 1:nobs
+            Turing.@addlogprob! $term
         end
     end
 end
@@ -221,11 +199,7 @@ function build_model_body(family::Type{<:Distribution}, modeldata::ModelData)
     push!(body.args, _linear_model(modeldata))
 
     # Likelihood
-    if weighted
-        push!(body.args, _weighted_likelihood(family))
-    else
-        push!(body.args, _likelihood(family))
-    end
+    push!(body.args, _likelihood(family, weighted))
 
     # No custom return: extraction reads sampled VarNames straight off the chain
     # (`DimArray(TR.samples)`, R10) in fit!/reshape.jl — see note above _pointwise_loglik.

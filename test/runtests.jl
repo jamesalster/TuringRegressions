@@ -317,8 +317,8 @@ end
     )
     quickfit!(mod_weighted)
 
-    # weights≡1 is mathematically identical to unweighted, but `_weighted_likelihood`'s
-    # per-obs `@addlogprob!` loop vs `_likelihood`'s vectorized `MvNormal` logpdf take a
+    # weights≡1 is mathematically identical to unweighted, but `_likelihood`'s weighted
+    # per-obs `@addlogprob!` loop vs its unweighted vectorized `MvNormal` logpdf take a
     # different numeric path through NUTS, so posterior means at N=300 land close but not
     # bit-identical (T12). Compare in pooled-SD units instead of a raw atol so the check
     # scales with actual MCMC noise rather than each param's raw magnitude.

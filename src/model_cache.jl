@@ -13,8 +13,11 @@ const MODEL_CACHE = Dict{Any,Tuple{Function,Expr}}()
 const MODEL_CACHE_LOCK = ReentrantLock()
 
 function _ranef_cache_key(ranef::RandomEffect)
+    # Generated symbols are positional (Symbol("σ_z_",i), not the group's variable name,
+    # model.jl) — two ranef terms with the same shape but different grouping-variable
+    # names compile to identical code, so `variable` is deliberately not part of the key.
     n_predictors = has_fixed_effects(ranef.predictors) ? size(ranef.predictors.X, 2) : 0
-    return (ranef.variable, ranef.predictors.has_intercept, has_fixed_effects(ranef.predictors), n_predictors)
+    return (ranef.predictors.has_intercept, has_fixed_effects(ranef.predictors), n_predictors)
 end
 
 function _model_cache_key(family::Type{<:Distribution}, modeldata::ModelData)

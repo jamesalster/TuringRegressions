@@ -19,7 +19,7 @@ mutable struct TuringRegression{T<:Distribution} <: RegressionModel
     modeldata::ModelData
     tf::Transform
     modelcode::Expr
-    samples::Union{Nothing,Chains}
+    samples::Union{Nothing,VNChain}
     parameters::Union{Nothing,DimStack}
 end
 
@@ -212,7 +212,7 @@ function _build_model_with_data(TR::TuringRegression)
     group_predictors = [re.predictors.X for re in Z]
     weights = something(md.weights, ones(length(md.y)))
     pr = TR.prior
-    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights, TR.tf,
+    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights,
         pr.intercept, pr.fixed_effects, pr.random_effects, pr.auxiliary)
 end
 
@@ -227,97 +227,21 @@ function fit!(
 )
     model_with_data = _build_model_with_data(TR)
 
-    # Sample. chain_type forced to MCMCChains.Chains: newer Turing defaults to
-    # FlexiChains.FlexiChain, whose internals (._data/._metadata/._structures) are
-    # incompatible with every .samples access site elsewhere in this package
-    # (name_map, indexing, etc). Forcing Chains keeps the rest of the package working
-    # without a rewrite.
     if quiet
-        TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; chain_type=MCMCChains.Chains, kwargs...)
+        TR.samples = @suppress sample(model_with_data, sampler, parallel, N, nchains; chain_type=VNChain, kwargs...)
     else
-        TR.samples = sample(model_with_data, sampler, parallel, N, nchains; chain_type=MCMCChains.Chains, kwargs...)
+        TR.samples = sample(model_with_data, sampler, parallel, N, nchains; chain_type=VNChain, kwargs...)
     end
 
-    # Recover standardised parameters from generated quantities, thanks to claude
-    gq = generated_quantities(model_with_data, TR.samples)
-    param_names = filter(!=(:loglik), collect(keys(first(gq))))
-    param_names = :α ∈ param_names ? [:α; filter(!=(:α), param_names)] : param_names
-
-    # Extract all parameters in one pass
-    param_dict = Dict(p => [gq[i, j][p] for i in axes(gq, 1), j in axes(gq, 2)] 
-                    for p in param_names)
-
-    draw_dim = Dim{:draw}(axes(gq, 1))
-    chain_dim = Dim{:chain}(axes(gq, 2))
-
-    # :fixef layer — α, β, aux params (unchanged content/shape from before T1)
-    fixef_arrays = []
-    fixef_labels = Symbol[]
-    for param in filter(p -> !occursin("_z_", string(p)), param_names)
-        if param === :β
-            arr = stack(param_dict[param])
-            push!(fixef_arrays, arr)
-            append!(fixef_labels, Symbol.(TR.modeldata.predictors.X_names))
-        else
-            push!(fixef_arrays, reshape(param_dict[param], 1, size(param_dict[param])...))
-            push!(fixef_labels, param)
-        end
-    end
-    fixef_arr = DimArray(vcat(fixef_arrays...), (Dim{:fixef}(fixef_labels), draw_dim, chain_dim))
-
-    layers = Dict{Symbol,Any}(:fixef => fixef_arr)
-
-    # One layer per random-effect grouping term
-    for re in TR.modeldata.Z
-        group = re.variable
-        intercept_sym = Symbol("α_z_", group)
-        beta_sym = Symbol("β_z_", group)
-        sd_sym = Symbol("σ_z_", group)
-        R_sym = Symbol("R_z_", group)
-        offset_sym = Symbol("offset_z_", group)
-
-        effect_names = Symbol[]
-        re.predictors.has_intercept && push!(effect_names, :Intercept)
-        has_fixed_effects(re.predictors) && append!(effect_names, Symbol.(re.predictors.X_names))
-
-        # Main layer: (effect, group, draw, chain)
-        if re.predictors.has_intercept & has_fixed_effects(re.predictors)
-            combined = [vcat(reshape(param_dict[intercept_sym][i, j], 1, :), param_dict[beta_sym][i, j])
-                        for i in axes(gq, 1), j in axes(gq, 2)]
-            main_arr = stack(combined)
-        elseif has_fixed_effects(re.predictors)
-            main_arr = stack(param_dict[beta_sym])
-        else # re.predictors.has_intercept only
-            combined = [reshape(param_dict[intercept_sym][i, j], 1, :) for i in axes(gq, 1), j in axes(gq, 2)]
-            main_arr = stack(combined)
-        end
-        layers[group] = DimArray(main_arr, (Dim{:effect}(effect_names), Dim{:group}(re.levels), draw_dim, chain_dim))
-
-        # :<group>_sd layer — back-transformed group-level SDs, one per effect
-        sd_arr = stack(param_dict[sd_sym])
-        layers[Symbol(group, "_sd")] = DimArray(sd_arr, (Dim{:effect}(effect_names), draw_dim, chain_dim))
-
-        # :<group>_corr layer — only when correlated (full L*L' per draw)
-        if R_sym ∈ param_names
-            corr_arr = stack(param_dict[R_sym])
-            layers[Symbol(group, "_corr")] = DimArray(
-                corr_arr, (Dim{:effect}(effect_names), Dim{:effect2}(effect_names), draw_dim, chain_dim)
-            )
-        end
-
-        # :<group>_offset layer — only for slope-only-no-intercept terms, hidden from user-facing accessors
-        if offset_sym ∈ param_names
-            offset_arr = stack(param_dict[offset_sym])
-            layers[Symbol(group, "_offset")] = DimArray(offset_arr, (Dim{:group}(re.levels), draw_dim, chain_dim))
-        end
-    end
-
-    # Internals
-    internals_names = TR.samples.name_map[:internals]
-    layers[:internals] = DimArray(permutedims(TR.samples[internals_names].value, (2, 1, 3)),
-        (Dim{:internal}(internals_names), Dim{:draw}, Dim{:chain}))
-
-    TR.parameters = DimStack(NamedTuple(layers))
+    # Raw standardised-scale sampled params straight off the chain, stacked into
+    # (iter,chain,param) with vector/matrix VarNames split into indices (`β[1]`,
+    # `L.L[2,1]`, ...) — R10, no model return statement needed. Splitting this flat
+    # array into named layers (:fixef, per-group, etc) happens here in fit! —
+    # transform.jl's `unstandardise` only does the scale math (back to original units),
+    # not the layer split. Not wired yet (T3 step 4) — interim single-layer wrap for
+    # step-4 verification.
+    raw = DimArray(TR.samples)
+    TR.parameters = DimStack((; raw=raw))
     return TR
 end
 

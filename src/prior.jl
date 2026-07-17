@@ -3,20 +3,24 @@
 """
 Container for regression model priors.
 
-Stores the prior distributions for intercept, fixed effects, 
-random effects, and auxiliary parameters (like σ or ν).
+Stores the prior distributions for intercept, fixed effects,
+random effect variance, and auxiliary parameters (like σ or ν).
+
+All fields are on the STANDARDISED data scale (mean 0, sd 1 predictors) — see
+`turing_glm` docstring. Use `prior_summary(TR)` or `show(TR)` to inspect.
 """
 @kwdef struct RegressionPrior
     intercept::Distribution
     fixed_effects::Distribution
-    random_effects::Distribution
+    random_effect_variance::Distribution
     auxiliary::Distribution
 end
 
 """
     default_prior(family::Type{<:Distribution}) -> RegressionPrior
 
-Returns sensible default priors for a regression model.
+Returns sensible default priors for a regression model, on the STANDARDISED
+data scale (mean 0, sd 1 predictors) — see `turing_glm` docstring.
 
 The auxiliary parameter adapts to the family:
 - Normal: Exponential(1) for variance
@@ -29,7 +33,7 @@ function default_prior(family::Type{<:Distribution})::RegressionPrior
     overall_defaults = (;
         intercept = Normal(0, 5),
         fixed_effects = Normal(0, 2),
-        random_effects = Exponential(1),
+        random_effect_variance = Exponential(1),
     )
 
     # Alter auxiliary prior

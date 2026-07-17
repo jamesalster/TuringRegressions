@@ -21,7 +21,8 @@ using TuringRegressions, RDatasets, Statistics
 mtcars = dataset("datasets", "mtcars")
 
 # Create a model
-# NB priors are on the standardised scale for now (A TODO is to fix that)
+# NB priors are on the standardised scale (mean 0, sd 1 predictors), not the
+# original data's units — see `prior_summary`/Notes below
 mod = turing_glm(
     @formula(MPG ~ Cyl + Disp),
     mtcars,
@@ -34,6 +35,7 @@ fit!(mod, N=1000, nchains=2)
 # View results
 summary(mod)
 summary(mod; show_metrics=true) # Just taken from posterior draws
+prior_summary(mod) # Just the prior block — same as show(mod), no formula/samples/warnings
 
 # Get coefficients
 fixed_effects = draws(mod, :fixef) # With uncertainty
@@ -172,7 +174,9 @@ Parameter extraction functions accept:
 
 ## Notes
 
-Priors are passed in at the standardised variable scale.
+Priors are passed in at the standardised variable scale (mean 0, sd 1 predictors),
+not the original data's units — `TR.prior`, `prior_summary(TR)`, and `show(TR)`
+all print exactly what's in force.
 
 Accepted model families are `Normal`, `TDist`, `Bernoulli`, `Poisson`, and `NegativeBinomial`.
 
@@ -183,7 +187,6 @@ It also uses the power of [DimensionalData.jl](https://rafaqz.github.io/Dimensio
 
 ## TODO
 
-* Priors currently expressed on standardised scale — move to original data scale
 * Investigate slow NUTS sampling for correlated random-effects models
 
 See `SPEC.md` for the full task list.

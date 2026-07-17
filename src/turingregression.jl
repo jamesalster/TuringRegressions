@@ -34,14 +34,17 @@ is_weighted(TR::TuringRegression) = is_weighted(TR.modeldata)
 
 Fit a Bayesian regression model.
 
-Data is automatically standardized. Supply priors scaled for 
-standardized predictors (mean=0, sd=1).
+Data is automatically standardized internally (mean 0, sd 1) for sampling
+efficiency. **Priors are specified on this STANDARDISED scale, not the
+original data's units** — `Normal(0, 2)` for `fixed_effects` means 2 std
+devs of the (standardised) predictor, not 2 units of the raw data. Inspect
+the priors in force with `TR.prior`, `prior_summary(TR)`, or `show(TR)`.
 
 # Arguments
 - `formula`: Regression formula (e.g., `@formula(y ~ x1 + x2)`)
 - `data`: DataFrame with response and predictors
 - `family`: Response distribution (Normal, Bernoulli, TDist, etc.)
-- `priors`: Prior distributions (defaults provided if omitted)
+- `priors`: Prior distributions, standardised scale (defaults from `default_prior(family)` if omitted)
 - `weights`: Optional sampling weights
 - `show_code`: Print the generated Turing model code
 
@@ -116,6 +119,47 @@ function turing_glm(
     return turing_glm(formula, table, T; kwargs...)
 end
 
+# Shared by Base.show(io,TR) and prior_summary(TR) — one place that knows how to
+# print a RegressionPrior against a given family (label_style/normal_style: crayons).
+function _print_prior(io::IO, pr::RegressionPrior, family::Type{<:Distribution}, label_style, normal_style; has_ranef::Bool=true)
+    println(io, label_style, "Prior (standardised scale):")
+    print(io, normal_style, "  Intercept: ")
+    println(io, normal_style, clean_prior_string(string(pr.intercept)))
+    print(io, normal_style, "  Fixed Effects: ")
+    println(io, normal_style, clean_prior_string(string(pr.fixed_effects)))
+    if has_ranef
+        print(io, normal_style, "  Random Effect Variance: ")
+        println(io, normal_style, clean_prior_string(string(pr.random_effect_variance)))
+    end
+
+    if family == TDist
+        print(io, normal_style, "  Error Variance: ")
+        println(io, normal_style, "Exponential(θ=1.0)")
+        print(io, normal_style, "  Auxiliary (ν): ")
+        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
+    elseif family == Normal
+        print(io, normal_style, "  Auxiliary (σ): ")
+        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
+    elseif family == NegativeBinomial
+        print(io, normal_style, "  Auxiliary (1/ϕ): ")
+        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
+    end
+end
+
+"""
+    prior_summary(TR::TuringRegression)
+    prior_summary(io::IO, TR::TuringRegression)
+
+Print `TR.prior` on its own — same block `show(TR)` prints, without formula/samples/
+warnings. Priors are always on the STANDARDISED scale (mean 0, sd 1 predictors),
+regardless of the original data's units — see `turing_glm` docstring.
+"""
+function prior_summary(io::IO, TR::TuringRegression{T}) where {T}
+    _print_prior(io, TR.prior, T, crayon"bold !underline", crayon"reset"; has_ranef=has_random_effects(TR))
+    return nothing
+end
+prior_summary(TR::TuringRegression) = prior_summary(stdout, TR)
+
 """
     show(io, TR::TuringRegression)
 
@@ -133,34 +177,11 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
     family_string = "$T (link: $(string(TR.link)))"
     println(io, normal_style, family_string)
 
-    # Formula  
+    # Formula
     print(io, label_style, "Formula: ")
     println(io, normal_style, string(TR.formula))
 
-    # Prior
-    println(io, label_style, "Prior:")
-    pr = TR.prior
-    print(io, normal_style, "  Intercept: ")
-    println(io, normal_style, clean_prior_string(string(pr.intercept)))
-    print(io, normal_style, "  Fixed Effects: ")
-    println(io, normal_style, clean_prior_string(string(pr.fixed_effects)))
-    if has_random_effects(TR)
-        print(io, normal_style, "  Random Effects: ")
-        println(io, normal_style, clean_prior_string(string(pr.random_effects)))
-    end
-
-    if T == TDist
-        print(io, normal_style, "  Error Variance: ")
-        println(io, normal_style, "Exponential(θ=1.0)")
-        print(io, normal_style, "  Auxiliary (ν): ")
-        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
-    elseif T == Normal
-        print(io, normal_style, "  Auxiliary (σ): ")
-        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
-    elseif T == NegativeBinomial
-        print(io, normal_style, "  Auxiliary (1/ϕ): ")
-        println(io, normal_style, clean_prior_string(string(pr.auxiliary)))
-    end
+    _print_prior(io, TR.prior, T, label_style, normal_style; has_ranef=has_random_effects(TR))
 
     # Observations
     print(io, label_style, "Observations: ")
@@ -213,7 +234,7 @@ function _build_model_with_data(TR::TuringRegression)
     weights = something(md.weights, ones(length(md.y)))
     pr = TR.prior
     return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights,
-        pr.intercept, pr.fixed_effects, pr.random_effects, pr.auxiliary)
+        pr.intercept, pr.fixed_effects, pr.random_effect_variance, pr.auxiliary)
 end
 
 function fit!(

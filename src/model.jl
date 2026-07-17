@@ -15,7 +15,7 @@ function _fixed_effects()
     end
 end
 
-# prior arg: prior_random_effects (shared across all ranef groups)
+# prior arg: prior_random_effect_variance (shared across all ranef groups)
 function _random_effects(modeldata::ModelData)
     model_ranef = modeldata.Z
     body = Expr(:block)
@@ -43,7 +43,7 @@ function _random_effects(modeldata::ModelData)
         if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2) + 1
             push!(body.args, quote
-                $variance_ranef ~ filldist(prior_random_effects, $n_predictors)
+                $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
                 $L_ranef ~ LKJCholesky($n_predictors, 2.0)
                 $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
                 # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
@@ -52,14 +52,14 @@ function _random_effects(modeldata::ModelData)
         elseif TuringRegressions.has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2)
             push!(body.args, quote
-                $variance_ranef ~ filldist(prior_random_effects, $n_predictors)
+                $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
                 $ranef_matrix_raw ~ filldist(Normal(), $n_predictors, n_groups[$i])
                 $ranef_matrix = ($variance_ranef .* $ranef_matrix_raw)'
             end)
         elseif ranef.predictors.has_intercept
             n_predictors = 1
             push!(body.args, quote
-                $variance_ranef ~ filldist(prior_random_effects, $n_predictors)
+                $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
                 $ranef_matrix_raw ~ filldist(Normal(), n_groups[$i])
                 $ranef_matrix = $ranef_matrix_raw .* $variance_ranef 
             end)
@@ -247,7 +247,7 @@ function construct_model(family::Type{<:Distribution}, modeldata::ModelData, sho
     fname = gensym(:turing_regression)
     model_code = quote
         @model function $(fname)(y, X, n_groups, group_idx, group_predictors, weights,
-            prior_intercept, prior_fixed_effects, prior_random_effects, prior_auxiliary)
+            prior_intercept, prior_fixed_effects, prior_random_effect_variance, prior_auxiliary)
             nobs, npredictors = size(X)
             $body
         end

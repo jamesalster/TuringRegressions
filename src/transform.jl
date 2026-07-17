@@ -106,7 +106,7 @@ function _unstandardise_fixef(std::DimArray, tf::Transform, md::ModelData, famil
         push!(parts, root === :σ ? y_scale .* v : v)
     end
 
-    return DimArray(vcat(parts...), (Dim{:fixef}(names), Dim{:draw}(1:ndraw), Dim{:chain}(1:nchain)))
+    return DimArray(vcat(parts...), (Dim{:fixef}(names), Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain)))
 end
 
 # Back-transform one ranef term's layers (V10). Returns a NamedTuple of layers to merge
@@ -122,7 +122,7 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, i::Int, ranef
     names = collect(dims(std_layers[Symbol(group)], :effect))
     levels = collect(dims(std_layers[Symbol(group)], :group))
     ndraw, nchain = size(M, 3), size(M, 4)
-    draw_chain = (Dim{:draw}(1:ndraw), Dim{:chain}(1:nchain))
+    draw_chain = (Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain))
 
     # Per-effect linear scale — intercept ← y, slopes ← y / sd_x — applied to both
     # the coefficients and their sds.

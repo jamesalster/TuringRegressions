@@ -107,7 +107,7 @@ function linpred(
     end
 
     # Initialise linear model output
-    μ = zeros((Dim{:row}(size(X, 1)), Dim{:draw}(ndraws), Dim{:chain}(nchains)))
+    μ = zeros((Dim{:row}(size(X, 1)), Dim{:iter}(ndraws), Dim{:chain}(nchains)))
 
     # loop over chains for dot product vectorisation
     for i in 1:size(μ, 3)

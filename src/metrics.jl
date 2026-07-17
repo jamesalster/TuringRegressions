@@ -84,9 +84,9 @@ function calculate_metrics(
     metric_names = pseudo_r2 ∈ metrics ? vcat(metric_names, "Pseudo r2") : metric_names
 
     if ndims(metric_table) == 2
-        metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}))
+        metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:iter}))
     elseif ndims(metric_table) == 3
-        metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:draw}, Dim{:chain}))
+        metric_table = DimArray(metric_table, (Dim{:metric}(metric_names), Dim{:iter}, Dim{:chain}))
     end
 
     return dropdims ? _drop_single_dims(metric_table) : metric_table

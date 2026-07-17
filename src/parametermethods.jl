@@ -3,13 +3,13 @@
 # Utility function for selecting draws and collapsing chains from a samples AxisArray
 function _process_draws(DA::Union{DimArray, DimStack}; drop_warmup::Int=200, n_draws::Int=-1, collapse::Bool=true)
     # Drop warmup
-    arr = DA[draw=(drop_warmup + 1):size(DA, :draw)]
-    @assert n_draws <= size(arr, :draw) "$n_draws draws is too many from $(size(arr, :draw)) available. Note that n_draws is applied per chain."
+    arr = DA[iter=(drop_warmup + 1):size(DA, :iter)]
+    @assert n_draws <= size(arr, :iter) "$n_draws draws is too many from $(size(arr, :iter)) available. Note that n_draws is applied per chain."
     # Select draws
-    arr = n_draws > 0 ? arr[draw=1:n_draws] : arr
+    arr = n_draws > 0 ? arr[iter=1:n_draws] : arr
     # Collapse
-    arr = collapse ? mergedims(arr, (:draw, :chain) => :draw) : arr
-    @assert size(arr, :draw) > 0 "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
+    arr = collapse ? mergedims(arr, (:iter, :chain) => :iter) : arr
+    @assert size(arr, :iter) > 0 "No samples returned, check kwargs and perhaps try adjusting `drop_warmup`?"
     return arr
 end
 
@@ -19,9 +19,9 @@ function _drop_single_dims(DA::Union{DimArray, DimStack})
     return dropdims(DA; dims=Tuple(dims_to_drop))
 end
 
-# Aggregate a draws/chain-dimensioned DimArray with fun over :draw (+:chain if present)
+# Aggregate a draws/chain-dimensioned DimArray with fun over :iter (+:chain if present)
 function _aggregate_draws(f::Function, arr::DimArray; dropdims=true)
-    dims_to_aggregate = hasdim(arr, :chain) ? [:draw, :chain] : [:draw]
+    dims_to_aggregate = hasdim(arr, :chain) ? [:iter, :chain] : [:iter]
     dimindices = ntuple(i -> dimnum(arr, dims_to_aggregate[i]), length(dims_to_aggregate))
     out = mapslices(f, arr; dims=dimindices)
     return dropdims ? _drop_single_dims(out) : out

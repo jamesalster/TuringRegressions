@@ -422,7 +422,7 @@ end
         @test collect(dims(subj, :effect)) == [:Intercept, :Days]
 
         corr = draws(mod, :Subject_corr)
-        @test size(corr) == (2, 2, size(corr, :draw))
+        @test size(corr) == (2, 2, size(corr, :iter))
     end
 
     @testset "intercept-only (1|Subject)" begin

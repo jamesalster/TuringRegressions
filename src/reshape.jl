@@ -6,7 +6,7 @@
 
 _select_param(raw::DimArray, root::Symbol) = raw[param=findall(==(root), getsym.(dims(raw, :param)))]
 
-# Unflatten the trailing (raw) idx dim of `sub` (dims :draw, :chain, :idx) into `shape`,
+# Unflatten the trailing (raw) idx dim of `sub` (dims :iter, :chain, :idx) into `shape`,
 # relying on FlexiChains preserving the sampled container's column-major element order.
 function _unflatten(sub::DimArray, shape::Tuple{Vararg{Int}})
     arr = permutedims(Array(sub), (3, 1, 2)) # (idx, draw, chain)
@@ -67,7 +67,7 @@ function _fixef_layer(raw::DimArray, md::ModelData, family::Type{<:Distribution}
 
     fixef = vcat(parts...) # (nfixef, draw, chain)
     ndraw, nchain = size(fixef, 2), size(fixef, 3)
-    return DimArray(fixef, (Dim{:fixef}(names), Dim{:draw}(1:ndraw), Dim{:chain}(1:nchain)))
+    return DimArray(fixef, (Dim{:fixef}(names), Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain)))
 end
 
 # One ranef term's layers, keyed on the sampled positional index `i` (model.jl's
@@ -82,7 +82,7 @@ function _ranef_layers(raw::DimArray, i::Int, ranef::RandomEffect)
     σz = _vector(raw, σz_root, n)                              # (effect, draw, chain)
     r = _unflatten(_select_param(raw, r_root), (n, n_groups)) # (effect, group, draw, chain)
     ndraw, nchain = size(σz, 2), size(σz, 3)
-    draw_chain = (Dim{:draw}(1:ndraw), Dim{:chain}(1:nchain))
+    draw_chain = (Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain))
 
     if _is_correlated(ranef)
         # Effects covary: reconstruct via the LKJ factor, M = diag(σz)·L·r per draw.

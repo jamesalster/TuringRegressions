@@ -1,7 +1,6 @@
 using TuringRegressions
 using Test
 using RDatasets
-using MCMCChains
 using StatsModels
 using StatsBase: mean, std, var, CoefTable
 using Suppressor: @suppress

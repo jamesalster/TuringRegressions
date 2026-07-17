@@ -194,36 +194,6 @@ function _weighted_likelihood(family::Type{<:Distribution})
     end
 end
 
-# per-observation log-likelihood, computed post-hoc since the likelihood itself is
-# added via Turing.@addlogprob! (no y[n] ~ Dist statement for DynamicPPL to track)
-function _pointwise_loglik(family::Type{<:Distribution}, weighted::Bool)
-    if weighted
-        if family == Normal
-            :(loglik = [weights[n] * logpdf(Normal(μ[n], σ), y[n]) for n in 1:nobs])
-        elseif family == TDist
-            :(loglik = [weights[n] * logpdf(μ[n] + σ * TDist(ν), y[n]) for n in 1:nobs])
-        elseif family == Bernoulli
-            :(loglik = [weights[n] * logpdf(BernoulliLogit(μ[n]), y[n]) for n in 1:nobs])
-        elseif family == Poisson
-            :(loglik = [weights[n] * logpdf(LogPoisson(μ[n]), y[n]) for n in 1:nobs])
-        elseif family == NegativeBinomial
-            :(loglik = [weights[n] * logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) for n in 1:nobs])
-        end
-    else
-        if family == Normal
-            :(loglik = logpdf.(Normal.(μ, σ), y))
-        elseif family == TDist
-            :(loglik = logpdf.(μ .+ σ .* TDist.(ν), y))
-        elseif family == Bernoulli
-            :(loglik = [logpdf(BernoulliLogit(μ[n]), y[n]) for n in 1:nobs])
-        elseif family == Poisson
-            :(loglik = [logpdf(LogPoisson(μ[n]), y[n]) for n in 1:nobs])
-        elseif family == NegativeBinomial
-            :(loglik = [logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n]) for n in 1:nobs])
-        end
-    end
-end
-
 #### Main function to assemble the model code
 function build_model_body(family::Type{<:Distribution}, modeldata::ModelData)
     model_ranef = modeldata.Z

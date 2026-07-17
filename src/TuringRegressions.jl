@@ -26,7 +26,6 @@ using Random
 using StatisticalMeasures
 using PosteriorStats: loo, compare
 using MCMCDiagnosticTools
-using MCMCChains: MCMCChains, summarize, Chains
 using FlexiChains: FlexiChains, VNChain
 using DynamicPPL: getsym
 

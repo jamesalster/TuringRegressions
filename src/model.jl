@@ -179,39 +179,44 @@ function build_model_body(family::Type{<:Distribution}, modeldata::ModelData)
 
     # Empty quote
     body = Expr(:block)
+    labels = String[] # section label per body.args entry, display-only (show_code)
 
     # Prior
     if has_intercept(modeldata)
         push!(body.args, _intercept())
+        push!(labels, "Intercept prior")
     end
     if has_fixed_effects(modeldata)
         push!(body.args, _fixed_effects())
+        push!(labels, "Fixed-effects prior")
     end
     if has_random_effects(modeldata)
         push!(body.args, _random_effects(modeldata))
+        push!(labels, "Random-effects prior")
     end
 
     if family ∉ [Bernoulli, Poisson] #Bernoulli and Poisson have no auxiliary parameter
         push!(body.args, _auxiliary_parameter(family))
+        push!(labels, "Auxiliary parameter prior")
     end
 
     # Linear Model
     push!(body.args, _linear_model(modeldata))
+    push!(labels, "Linear model")
 
     # Likelihood
     push!(body.args, _likelihood(family, weighted))
+    push!(labels, weighted ? "Likelihood (weighted)" : "Likelihood")
 
     # No custom return: extraction reads sampled VarNames straight off the chain
     # (`DimArray(TR.samples)`, R10) in fit!/reshape.jl — see note above _pointwise_loglik.
 
-    return body
+    return body, labels
 end
 
 #### Wrapper function for the above, to handle some additional logic
-function construct_model(family::Type{<:Distribution}, modeldata::ModelData, show_code::Bool=false)
-
-    #handle logic here
-    body = build_model_body(family, modeldata)
+function construct_model(family::Type{<:Distribution}, modeldata::ModelData)
+    body, _ = build_model_body(family, modeldata)
 
     # build model code
     # Unique name per generated model: DynamicPPL dispatches model evaluation on
@@ -227,10 +232,26 @@ function construct_model(family::Type{<:Distribution}, modeldata::ModelData, sho
         end
     end
 
-    model_code_str = prettify(model_code)
-    if show_code
-        println("Generated model:\n $(model_code_str)")
-    end
+    return eval(model_code), prettify(model_code)
+end
 
-    return eval(model_code), model_code_str
+"""
+    modelcode(TR::TuringRegression)
+
+Print the generated Turing model code for `TR`, annotated with a comment
+header per section (priors / linear model / likelihood). Rebuilds the code
+fragments on demand from `TR.modeldata` — display-only, no effect on the
+already-fitted model.
+"""
+function modelcode(TR::TuringRegression{T}) where {T}
+    body, labels = build_model_body(T, TR.modeldata)
+    sections = ["    # $label\n" * string(prettify(frag)) for (label, frag) in zip(labels, body.args)]
+    println("""
+    @model function turing_model(y, X, n_groups, group_idx, group_predictors, weights,
+        prior_intercept, prior_fixed_effects, prior_random_effect_variance, prior_auxiliary)
+        nobs, npredictors = size(X)
+    $(join(sections, "\n\n"))
+    end
+    """)
+    return nothing
 end

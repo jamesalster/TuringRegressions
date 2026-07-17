@@ -29,11 +29,11 @@ end
 # Memoized wrapper around construct_model: identical specs reuse the same
 # eval'd model function (and its already-JIT'd AD/sampler methods); only
 # genuinely new shapes pay gensym+eval.
-function cached_construct_model(family::Type{<:Distribution}, modeldata::ModelData, show_code::Bool=false)
+function cached_construct_model(family::Type{<:Distribution}, modeldata::ModelData)
     key = _model_cache_key(family, modeldata)
     lock(MODEL_CACHE_LOCK) do
         get!(MODEL_CACHE, key) do
-            construct_model(family, modeldata, show_code)
+            construct_model(family, modeldata)
         end
     end
 end

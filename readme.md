@@ -187,7 +187,5 @@ It also uses the power of [DimensionalData.jl](https://rafaqz.github.io/Dimensio
 
 ## TODO
 
-* Investigate slow NUTS sampling for correlated random-effects models
-
-See `SPEC.md` for the full task list.
+See `SPEC.md` for the task list.
 

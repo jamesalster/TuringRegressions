@@ -30,7 +30,7 @@ has_random_effects(TR::TuringRegression) = has_random_effects(TR.modeldata)
 is_weighted(TR::TuringRegression) = is_weighted(TR.modeldata)
 
 """
-    turing_glm(formula, data, family; priors, weights, show_code)
+    turing_glm(formula, data, family; priors, weights)
 
 Fit a Bayesian regression model.
 
@@ -39,6 +39,7 @@ efficiency. **Priors are specified on this STANDARDISED scale, not the
 original data's units** — `Normal(0, 2)` for `fixed_effects` means 2 std
 devs of the (standardised) predictor, not 2 units of the raw data. Inspect
 the priors in force with `TR.prior`, `prior_summary(TR)`, or `show(TR)`.
+Inspect the generated Turing model code with `modelcode(TR)`.
 
 # Arguments
 - `formula`: Regression formula (e.g., `@formula(y ~ x1 + x2)`)
@@ -46,7 +47,6 @@ the priors in force with `TR.prior`, `prior_summary(TR)`, or `show(TR)`.
 - `family`: Response distribution (Normal, Bernoulli, TDist, etc.)
 - `priors`: Prior distributions, standardised scale (defaults from `default_prior(family)` if omitted)
 - `weights`: Optional sampling weights
-- `show_code`: Print the generated Turing model code
 
 # Example
 ```julia
@@ -58,8 +58,7 @@ function turing_glm(formula::FormulaTerm,
     data::DataFrame,
     family::Type{<:Distribution};
     priors::RegressionPrior=default_prior(family),
-    weights::Union{Nothing, Vector{Float64}}=nothing,
-    show_code::Bool=false)
+    weights::Union{Nothing, Vector{Float64}}=nothing)
 
     if family ∉ [Normal, TDist, Bernoulli, Poisson, NegativeBinomial]
         error("Family: $(string(family)) not supported.")
@@ -71,7 +70,7 @@ function turing_glm(formula::FormulaTerm,
     modeldata = extract_model_data(formula, data, weights)
     _, tf = standardise(modeldata, family)
 
-    model_obj, model_code = cached_construct_model(family, modeldata, show_code)
+    model_obj, model_code = cached_construct_model(family, modeldata)
 
     return TuringRegression{family}(
         modeldata.f,

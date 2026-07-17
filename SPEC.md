@@ -11,11 +11,15 @@ family, calls `fit!`, extracts coefs / predicts / metrics / compares / plots.
 
 Core loop: `turing_glm(formula, data, family)` → `fit!` → `summary`/`draws`/`predict`.
 
+**Fit speed inside model = top priority.** Generated `@model` code stays minimal —
+no unnecessary work in the NUTS hot path. Anything doable outside the model
+(standardise/unstandardise, reshape, back-transform, loglik) lives OUTSIDE it.
+
 ## §C CONSTRAINTS
 
 - C1. Julia. Turing.jl 0.36.3 MCMC. Sampler default NUTS, parallel MCMCThreads, N=2000, nchains=4.
 - C2. Data standardised OUTSIDE model now (`Transform`/`standardise`, moved out under T3 step 3 — see §I Types). User priors still scaled to std predictors (mean 0, sd 1) — **T4 flips this to original scale** (not started).
-- C3. Params stored/returned `TR.parameters::DimStack`. One layer per group (`:fixef`, per-ranef `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`), layer's own dims incl `:draw, :chain`. Chains collapsible to one `:draw` dim via `draws(...)`.
+- C3. Params stored/returned `TR.parameters::DimStack`. One layer per group (`:fixef`, per-ranef `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`), layer's own dims incl `:iter, :chain` (FlexiChains names, `:iter` not `:draw` since T3). Chains collapsible to one `:iter` dim via `draws(...)`.
 - C4. Families supported: `Normal, TDist, Bernoulli, Poisson, NegativeBinomial`. Others → `error`.
 - C5. Links fixed per family (util `get_link`): Normal/TDist→identity, Bernoulli→logit, Poisson/NegBin→log.
 - C6. Model code generated Julia `Expr` at runtime, `eval`'d into `@model turing_regression`. Not hand-written. `show_code=true` prints generated source — **T5 re-verifies this path.**
@@ -32,7 +36,7 @@ Model creation:
 - `default_prior(family)` / `default_prior(TR)` → `RegressionPrior` (intercept N(0,5), fixef N(0,2), ranef Exp(1), aux family-dep).
 
 Fitting:
-- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), N=2000, nchains=4, quiet=true, kwargs...)` mutates TR. Recovers unstandardised params via `generated_quantities` into `TR.parameters` (DimStack).
+- `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), samples_per_chain=2000, samples=nothing, nchains=4, warmup=200, quiet=true, kwargs...)` mutates TR (T16). Budget: give EITHER `samples_per_chain` (kept draws/chain) OR `samples` (total kept draws, split `samples ÷ nchains` per chain — overrides `samples_per_chain` when non-`nothing`, must divide evenly). `warmup` (default 200) = extra draws sampled per chain then discarded downstream by `draws`/`summary`'s `drop_warmup` (NOT discarded at sample time); `warmup=0` disables. Passes `N = per_chain + warmup` to Turing `sample`. Recovers unstandardised params OUTSIDE the model: `DimArray(TR.samples)` → `reshape_params` → `unstandardise` (src/reshape.jl) → `TR.parameters` (DimStack). No in-model back-transform (T3).
 
 Param extraction (`src/parametermethods.jl`):
 - `draws(TR; drop_warmup=200, n_draws=-1, collapse=true)` whole `TR.parameters` DimStack (all layers), warmup dropped/chains collapsed per kwargs.
@@ -73,12 +77,12 @@ Types:
 - `RandomEffect` — `variable::Symbol`, `levels::Vector`, `level_index::Vector{Int}`, `predictors::Predictors`.
 - `ModelData` — `f::FormulaTerm`, `y::AbstractVector`, `predictors::Predictors` (fixef), `Z::Vector{RandomEffect}` (empty ⇒ no ranef), `weights::Union{Nothing,Vector{Float64}}`. Always RAW/unstandardised; same struct reused for `predict`'s new-data path. 4 structural accessors dispatch over it (and over `TuringRegression`, so callers don't care which they hold): `has_intercept`/`has_fixed_effects(md)` (from `md.predictors`), `has_random_effects(md) = !isempty(md.Z)`, `is_weighted(md) = !isnothing(md.weights)`.
 - `LinearTransform` (`src/transform.jl`) — `means::Vector{Float64}`, `stds::Vector{Float64}`. One per `Predictors` (fixef + each ranef); empty vectors when that predictor set is empty.
-- `Transform` — `fixef::LinearTransform`, `y_mean::Float64`, `y_std::Float64`, `scale_y::Bool` (`family ∈ {Normal,TDist}`), `ranef::Vector{LinearTransform}` (aligned with `ModelData.Z`). The affine map's constants, computed once per fit, stored on `TR.tf`.
+- `Transform` — affine-map constants, computed once per fit, stored on `TR.tf`. `?` field layout stale: code now nests `tf.y` as a `LinearTransform` (indexed `tf.y.mean[1]`/`tf.y.scale[1]`, comparison.jl) and gates y-scaling on `spec.scales_y` (family_spec), NOT flat `y_mean`/`y_std`/`scale_y`. Also holds `fixef::LinearTransform`, `ranef::Vector{LinearTransform}` (aligned with `ModelData.Z`). Code is oracle — T15 reconciles.
   - `compute_transform(md::ModelData, family)::Transform` — pure, means/stds from raw data.
   - `apply_transform(tf::Transform, md::ModelData)::ModelData` — applies given constants → scaled `ModelData`.
   - `standardise(md, family) = (apply_transform(tf,md), tf) where tf = compute_transform(md,family)`.
   - `unstandardise_data(md_std, tf)::ModelData` — inverse, used by round-trip guard (V21).
-  - Back-transform of drawn params (not just data) lives inside `_generated_quantities` (model.jl), reading `tf.*`.
+  - Back-transform of drawn params (not just data) lives in `unstandardise` (src/reshape.jl), reading `tf.*` — runs OUTSIDE the model, post-fit (T3).
 - `TuringRegression{T<:Distribution}` — `formula, model, prior, link, modeldata::ModelData, tf::Transform, modelcode, samples, parameters`. `modeldata` always RAW (V21).
 - `RegressionPrior` — `intercept`/`fixed_effects`/`random_effects`/`auxiliary`. Passed as runtime model args (`prior_intercept` etc), not baked into the generated `Expr` — keeps `cached_construct_model`'s cache key purely structural (V20).
 
@@ -93,7 +97,7 @@ Types:
 - V7. `draws(TR, type)` shape `(n_effect_dims..., (N-drop_warmup)*nchains)` when collapsed; extra trailing `:chain` dim if `collapse=false`.
 - V8. `n_draws` requested beyond available post-warmup draws → `AssertionError`.
 - V9. Returned param labels: `[:α, :<X_names...>, aux...]`; `:α` always present for models with intercept.
-- V10. Standardised→original param recovery in `_generated_quantities`, reading `tf::Transform`: `β_orig = (tf.y_std./tf.fixef.stds).*β` (Gaussian family) or `β./tf.fixef.stds` (count/binary); `α` likewise via `dot(tf.fixef.means, β_orig)`. Scaling constants come from `TR.tf`, not recomputed inside the model. Back-transform still runs inside the generated `@model` (extraction fully out to Julia is `T3` step 4, not started).
+- V10. Standardised→original param recovery lives in `unstandardise` (src/reshape.jl) via `_scale_effects`/`_center` helpers, reading `tf::Transform` (nested `tf.fixef`, `tf.y`, `tf.ranef` LinearTransforms). Runs OUTSIDE the model, post-fit (T3 done — no back-transform in generated `@model`). `?` exact algebra + Transform field names — code is oracle, this wording is stale; T15 reconciles.
 - V11. `summary` auto `drop_warmup`: 0 if `N<400` else 200.
 - V12. `rhat>1.05` / `ess<100` / `mcse>5%std` → `@warn`; softer thresholds → `@info`.
 - V13. Bernoulli param recovery vs GLM looser tolerance: coef atol 0.05, epred atol 0.05.
@@ -101,7 +105,7 @@ Types:
 - V15. `posterior_predict(TR, new_data::DataFrame)` uses raw new X, original-scale stored β (no re-standardisation of new X). `epred` on new data ≈ `GLM.predict` on same new data. Guards against re-introducing standardisation in the predict path.
 - V16. `extract_random_effect` predictor slicing conditions on `has_intercept(term.lhs)` — `(0+x...|g)` (no-intercept ranef terms) sliced differently from intercept-bearing ranef terms. Fixed 2026-07-15, guarded by dedicated tests.
 - V17. Test suite runs via `Pkg.test()`, not direct `julia --project=. test/runtests.jl` — `Pkg.test()`'s isolated temp env is the only one that both (a) resolves deps fresh from `[extras]`/`[compat]` and (b) exercises the package's real symbol table end-to-end. Requires `[compat]` pinned on every Turing-stack package whose version drift can silently break internals (`Turing`, `DynamicPPL`, `FlexiChains`, `MCMCChains` — currently 0.46/0.42/0.6/7), so the temp env's independent resolve can't drift to an incompatible combo.
-- V19. `_generated_quantities` (`src/model.jl`) return tuple always includes a `:loglik` key — per-observation log-likelihood vector, added under T7 for `psis_loo`/`loo_compare`. Computed post-hoc inside `_generated_quantities` rather than via DynamicPPL's normal VarName-based pointwise-loglik tracking, because `model.jl`'s likelihood is written with `Turing.@addlogprob!` (not `y[n] ~ Dist(...)`) — no observed VarNames exist for DynamicPPL to see. Any code calling `generated_quantities(model_with_data, TR.samples)` directly must filter/exclude `:loglik` before treating the returned keys as fitted parameter names — `src/turingregression.jl`'s fixef-layer param loop does this via `filter(!=(:loglik), ...)`.
+- V19. Per-observation log-likelihood is computed by the standalone `pointwise_loglik(TR)` (`src/comparison.jl`), NOT inside the model — model.jl's likelihood uses `Turing.@addlogprob!` (not `y[n] ~ Dist(...)`) so no observed VarNames exist for DynamicPPL to track. `pointwise_loglik` re-evaluates per-obs logpdf post-fit (reuses `linpred`, undoes y-standardisation to the scale sampling ran on); `psis_loo`/`loo_compare` call it. Returns `Array{Float64,3}` shape `(iter, chain, obs)`. (T3 moved this out of the deleted `_generated_quantities`.)
 - V20. `turing_glm` builds its model via `cached_construct_model` (`src/model_cache.jl`), not `construct_model` directly. `MODEL_CACHE::Dict{Any,Tuple{Function,Expr}}` + `ReentrantLock`, keyed PURELY STRUCTURALLY: `family` + `ModelData`'s 4 accessor bools + per-ranef `(variable, has_intercept, has_fixed_effects, n_predictors)`. Priors are NOT part of the key — they're runtime model args (`prior_intercept` etc), so distinct priors on an otherwise-identical shape share one cache entry/gensym'd model. Identical spec fit repeatedly reuses the same model function (skips ~25s recompile per T13 finding).
 - V21. Round-trip: `unstandardise_data(apply_transform(tf,md), tf) ≈ md` holds on `.predictors.X`, each `.Z[i].predictors.X`, and `.y`, across all 5 families × 3 ranef shapes (fixef-only, ranef intercept+slope, ranef slope-only).
 - V22. `posterior_predict`/`predict` never re-standardise: `TR.modeldata` stays RAW, and any transient `md_std` built during `fit!` is local to that call. New-data predict paths must feed raw X straight through — this is a live guard against re-introducing standardisation into predict (see V15).
@@ -130,10 +134,11 @@ id|date|cause|fix
 
 ## §T TASKS
 
-T3|.|BIG JOB, merged w/ old T8 (co-dependent — both rewrite `_generated_quantities`/extraction, doing separately means touching same code twice). Data-flow structs (`ModelData`/`Predictors`/`RandomEffect`/`Transform`, standardise-outside-model, priors-as-args) are DONE — remaining scope is the FlexiChains + unscaling step, not started:
-  drop MCMCChains for FlexiChains — model's `@model` return stmt becomes single flat `DimArray` (not NamedTuple), pulled via `DynamicPPL.returned(model, chain; stack=true)` which auto-stacks into one `(iter,chain,param)` DimArray (R9; NamedTuple-of-DimArray does NOT auto-stack, so don't return a layered NamedTuple). Replace today's manual per-layer Dict+stack+vcat loop over `generated_quantities` with this; back-transform (`unstandardise`, building a `DimStack`) applied AFTER unstacking, not inside the model — deletes `_generated_quantities` entirely. Promote FlexiChains `[extras]`→`[deps]` (R5). Swap `chain_type=MCMCChains.Chains`→`VNChain`, `summarize`→`summarystats` (confirm fields, R4), `.name_map`/`.value` indexing→`VarName`-keyed access (R2,R3).
-  Once that lands, rest of API (`parametermethods.jl` `draws`, `summary.jl`, etc) should adopt FlexiChains' own conventions rather than forcing into today's names — e.g. `:iter` not `:draw`, FlexiChains' own dim ordering. Touches V7 (draws shape), V9 (param labels), C3 (layer/dim naming) — re-verify those invariants under new naming. `pointwise_loglik(TR)` becomes a standalone post-hoc helper (V19) called by `psis_loo`/`turingregression.jl`, no longer riding inside `_generated_quantities`'s NamedTuple.
-  Re-verify V-invariants under Turing/NUTS after. Then T4 (prior flip) and T5 (likelihood merge, code-gen re-verify) proceed|C2,C6,C9,V3,V4,V7,V9,V10,V14,V19,R1-R10
+T3|x|DONE. FlexiChains + unscaling rewrite landed. MCMCChains→VNChain (`chain_type=VNChain`, `summarize`→`summarystats`, VarName-keyed access). `_generated_quantities` deleted — model no longer has a return stmt; extraction is `DimArray(TR.samples)` (raw sampled VarNames, R10) → `reshape_params` (flat→named DimStack layers, still std scale) → `unstandardise` (→ original scale), all in `src/reshape.jl`, OUTSIDE the model (turingregression.jl:241-243). `:draw`→`:iter` throughout. `pointwise_loglik(TR)` standalone in comparison.jl. Priors already runtime args (`prior_intercept` etc, V20). ~28 targeted-scratch tests passed at close — full `Pkg.test()` NOT yet re-run (see T15). Stale §C/§I/§V refs to `_generated_quantities`/`:draw`/in-model back-transform cleaned|C2,C6,C9,V3,V4,V7,V9,V10,V14,V19,R1-R10
+
+T15|x|RE-VERIFY FIRST (gates T4,T5). Run full `Pkg.test()` (C10, V17) to confirm every invariant holds under the landed T3 rewrite before touching model internals again. Reconcile any V that drifted (V7 shape, V9 labels, V10/V19 wording) with actual behaviour|V3,V4,V5,V6,V7,V9,V10,V14,V21,V22,V23,C10,V17
+
+T16|.|`fit!` budget API (independent of T4/T5, src/turingregression.jl:219-233 + docstring 188-201). Rename `N`→`samples_per_chain`; add `samples=nothing` (total kept, `samples ÷ nchains` per chain when set, error if not evenly divisible) and `warmup=200`. Pass `N = per_chain + warmup` to `sample(...)`. Docstring: state 200 warmup added by default, discarded downstream via `drop_warmup`, `warmup=0` to disable. Downstream `drop_warmup=200` defaults UNCHANGED (warmup kept in chain, dropped at extraction)|I,V11
 
 T4|.|BIG JOB: flip prior scaling (depends on T3's centralised affine map). Today user specifies priors on standardised (mean 0, sd 1) scale. Change so priors are given on ORIGINAL data scale — e.g. `Normal(10,20)` on a predictor with mean 10, sd 20 → transformed to `Normal(0,1)` internally for the standardised fit — reported back on original scale in `summary`/`show`/prior display. Use `Distributions.AffineDistribution` (`shift + scale*d`) for the forward transform (prior) and its inverse for the param back-transform — don't hand-write new per-family algebra. Store user's original prior for display; fit on scaled. Re-verify V-invariants under Turing/NUTS with `AffineDistribution` priors|C2,I
 

@@ -69,7 +69,7 @@ try # T11: keep going through sibling testsets on failure, still print benchmark
 
     @testset "call forms" begin
         @test_nowarn posterior_predict(mod) # fitted data
-        @test_nowarn posterior_predict(mod, mod.X) # matrix
+        @test_nowarn posterior_predict(mod, mod.modeldata.predictors.X) # matrix
         new_data = mtcars[1:5, :]
         @test_nowarn posterior_predict(mod, new_data) # new DataFrame
     end
@@ -120,7 +120,7 @@ end
     @test size(vcov(mod)) == (3, 3)
     @test size(confint(mod)) == (3, 2)
     @test coeftable(mod) isa CoefTable
-    @test response(mod) == mod.y
+    @test response(mod) == mod.modeldata.y
     @test isapprox(residuals(mod), response(mod) .- fitted(mod))
 
     # predict (StatsAPI point estimate) vs posterior_predict (full posterior, primary API)

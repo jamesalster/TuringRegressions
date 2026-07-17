@@ -81,7 +81,7 @@ Plot how predictions change when varying one variable while holding others at th
 function conditional_dependency(
     TR::TuringRegression, variable::Symbol; type=:posterior, kwargs...
 )
-    if TR.modelinfo.has_random_effects
+    if has_random_effects(TR)
         @warn "conditional_dependency only varies fixed effects; random effects are held at their fitted values, not marginalised or re-predicted."
     end
     N = 200

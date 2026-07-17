@@ -171,8 +171,8 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
     if isnothing(TR.samples)
         println(io, normal_style, "empty")
     else
-        sz = size(TR.samples)
-        println(io, normal_style, "$(sz[1] * sz[3]) samples across $(sz[3]) chains")
+        sz = size(TR.samples)  # FlexiChain: (iter, chain)
+        println(io, normal_style, "$(sz[1] * sz[2]) samples across $(sz[2]) chains")
     end
 
     if warnings

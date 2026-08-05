@@ -29,7 +29,9 @@ Compute standardisation constants from raw `ModelData`. Pure — does not touch 
 """
 function compute_transform(md::ModelData, family::Type{<:Distribution})
     fixef = fit(ZScoreTransform, md.predictors.X, dims=1)
+    fixef.scale .= 1.0  # T21: predictors centered only, not scaled
     ranef = [fit(ZScoreTransform, re.predictors.X, dims=1) for re in md.Z]
+    foreach(rt -> rt.scale .= 1.0, ranef)  # T21
     scale_y = family_spec(family).scales_y
     y = scale_y ? fit(ZScoreTransform, md.y) : fit(ZScoreTransform, md.y; center=false, scale=false)
     return Transform(fixef, y, ranef)

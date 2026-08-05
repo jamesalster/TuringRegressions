@@ -1,6 +1,13 @@
 
 #### Building blocks of the model
 
+# T21: same prior arg slot now accepts either one Distribution (replicated via
+# filldist, original behaviour) or a per-column Vector{<:Distribution}
+# (arraydist) — needed once fixed/random effects aren't scaled to a common sd,
+# so a single prior width no longer fits every column. See prior.jl.
+_dist_for(d::Distribution, n) = filldist(d, n)
+_dist_for(d::AbstractVector{<:Distribution}, n) = arraydist(d)
+
 # prior arg: prior_intercept
 function _intercept()
     quote
@@ -11,7 +18,7 @@ end
 # prior arg: prior_fixed_effects
 function _fixed_effects()
     quote
-        β ~ filldist(prior_fixed_effects, npredictors)
+        β ~ _dist_for(prior_fixed_effects, npredictors)
     end
 end
 
@@ -43,7 +50,7 @@ function _random_effects(modeldata::ModelData)
         if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2) + 1
             push!(body.args, quote
-                $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
+                $variance_ranef ~ _dist_for(prior_random_effect_variance, $n_predictors)
                 $L_ranef ~ LKJCholesky($n_predictors, 2.0)
                 $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
                 # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
@@ -52,14 +59,14 @@ function _random_effects(modeldata::ModelData)
         elseif TuringRegressions.has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2)
             push!(body.args, quote
-                $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
+                $variance_ranef ~ _dist_for(prior_random_effect_variance, $n_predictors)
                 $ranef_matrix_raw ~ filldist(Normal(), $n_predictors, n_groups[$i])
                 $ranef_matrix = ($variance_ranef .* $ranef_matrix_raw)'
             end)
         elseif ranef.predictors.has_intercept
             n_predictors = 1
             push!(body.args, quote
-                $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
+                $variance_ranef ~ _dist_for(prior_random_effect_variance, $n_predictors)
                 $ranef_matrix_raw ~ filldist(Normal(), n_groups[$i])
                 $ranef_matrix = $ranef_matrix_raw .* $variance_ranef 
             end)

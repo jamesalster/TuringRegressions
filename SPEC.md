@@ -33,6 +33,7 @@ Model creation:
 - `turing_glm(formula::FormulaTerm, data::DataFrame, family, priors=default_prior(family), weights=nothing, show_code=false)` → `TuringRegression{family}`
 - `turing_glm(y::Vector, X::Array, ::Type{T}; names=Symbol[], kwargs...)` array form, synthesises formula, forwards.
 - `default_prior(family)` / `default_prior(TR)` → `RegressionPrior` (intercept N(0,5), fixef N(0,2), random_effect_variance Exp(1), aux family-dep). All fields std-scale.
+- `scaled_default_prior(family, md::ModelData)` → `RegressionPrior` (T21, branch `remove-predictor-standardisation`). Used as `turing_glm`'s actual default when caller omits `priors` (kwarg default is `nothing`, resolved post-`modeldata`). Per-column-rescaled `fixed_effects`/`random_effect_variance` for centered-only (unscaled) predictors — see V25.
 
 Fitting:
 - `fit!(TR; sampler=NUTS(), parallel=MCMCThreads(), samples=2000, nchains=4, warmup=samples, quiet=true, kwargs...)` mutates TR. Budget: `samples` (kept draws) and `warmup` (adaptation, discarded) are TOTALS across chains, each split over `nchains` via ceil (`per_chain=cld(samples,nchains)`, `warmup_per_chain=cld(warmup,nchains)`) — rounds UP so realised count never below request. `warmup` is IN ADDITION to `samples` (each chain runs warmup_per_chain discarded + per_chain kept), default = `samples`. Discarded upstream by Turing (`nadapts`/`discard_initial`), never reaches `TR.samples`; `warmup=0` disables. Passes `per_chain` as `N` to Turing `sample`. Recovers unstandardised params OUTSIDE the model: `DimArray(TR.samples)` → `reshape_params` → `unstandardise` (src/reshape.jl) → `TR.parameters`. No in-model back-transform.
@@ -81,7 +82,7 @@ Types:
   - `unstandardise_data(md_std, tf)::ModelData` — inverse, used by round-trip guard (V21).
   - Back-transform of drawn params lives in `unstandardise` (src/reshape.jl), reading `tf.*`, OUTSIDE the model, post-fit.
 - `TuringRegression{T<:Distribution}` — `formula, model, prior, link, modeldata::ModelData, tf::Transform, modelcode, samples, parameters`. `modeldata` always RAW (V21).
-- `RegressionPrior` — `intercept`/`fixed_effects`/`random_effects`/`auxiliary`. Passed as runtime model args, not baked into the generated `Expr` — keeps `cached_construct_model`'s cache key purely structural (V20).
+- `RegressionPrior` — `intercept`/`fixed_effects`/`random_effects`/`auxiliary`. Passed as runtime model args, not baked into the generated `Expr` — keeps `cached_construct_model`'s cache key purely structural (V20). `fixed_effects`/`random_effect_variance` typed `PriorSpec = Union{Distribution, AbstractVector{<:Distribution}}` (T21) — scalar (old, one dist for all cols) or per-col vector (new).
 
 ## §V INVARIANTS
 
@@ -108,6 +109,7 @@ Types:
 - V22. `posterior_predict`/`predict` never re-standardise: `TR.modeldata` stays RAW; transient `md_std` during `fit!` is local. New-data predict feeds raw X straight through.
 - V23. Ranef components (`ranef_matrix` in `_random_effects`, model.jl) must be mean-zero by construction — no free param acts as extra mean shift (would be confounded with population fixed effect over same predictor → NUTS ridge, biased marginals). Population `α`/`β` are the only mean-carrying params; ranef branches add zero-mean deviations only (`diagm(σ)*L*z_raw` or `σ.*z_raw`).
 - V24. Post-`fit!`, `size(TR.samples, 1) == cld(samples, nchains)` exactly, regardless of `warmup`. Inexact division rounds up (realised total ≥ requested `samples`).
+- V25. (T21, branch `remove-predictor-standardisation`, not yet on main) `compute_transform` sets `fixef.scale`/`ranef[i].scale` to all-ones in place (fit normal `ZScoreTransform` then `.scale .= 1.0` — NOT `scale=false`, that gives empty vector and breaks `_unstandardise_fixef`/`_unstandardise_ranef` division). Centering kept, scaling dropped, both fixef+ranef. Model code's `_dist_for(prior, n)` dispatches `filldist` (scalar `Distribution`) vs `arraydist` (`Vector{<:Distribution}`) so `_fixed_effects`/`_random_effects` (model.jl) transparently take either. `scaled_default_prior` rescales per-column by raw sd (`Normal(μ,σ/sd)`, `Exponential(θ/sd)`); ranef variance rescaling only when `length(md.Z)==1` (matches T20 scope), else falls back to plain scalar default (doc'd limitation, not silent-wrong). `unstandardise` (V10) needs no change — algebra verified: `β_model = β_raw/sd_y` (X centered-only), back-transform `β_orig = β_model * y_scale / 1.0` still correct.
 
 ## §B BUGS
 
@@ -119,5 +121,5 @@ T14|.|First `using TuringRegressions` / `Pkg.test()` pays full TTFX (Turing/Dyna
 T17|.|`TR.link` field (predict.jl) — used internally, V1-bounded to the 5 families, not user-facing. Confirm it can stay internal / no action needed|V1
 T19|.|`fit!(quiet=false)` live progress bar not showing in VSCode Julia REPL. Likely needs a progress-capable logger (TerminalLoggers) or VSCode's ProgressLogging integration. Low priority — sort later|
 T20|x|Full Pkg.test() too slow for dev iteration. Add small subset: one Normal fit, one Bernoulli fit, mixedmodels benchmark fit only — reusable runner for T21/T22 dev loop|C10
-T21|.|Branch: drop predictor standardisation (C2) inside model, keep centering only. Compare fit time + accuracy vs current std approach (V3/V4/V13 tolerances) using T20 subset|C2,V3,V4,V13,T20
+T21|.|Branch `remove-predictor-standardisation`: drop predictor standardisation (C2) inside model, keep centering only, for BOTH fixef+ranef. Rescaled priors via `scaled_default_prior` (V25), not plain `default_prior` reuse — implemented, parse-checked, not yet run/tested. Still to do: T20 subset run vs main baseline (fit time + accuracy, V3/V4/V13 tolerances)|C2,V3,V4,V13,V25,T20
 T22|.|Post-compile NUTS perf on mixedmodels-benchmark fit v slow vs Stan/lme4 — profile + improve. Use T20 subset to iterate|T20

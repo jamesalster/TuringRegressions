@@ -45,7 +45,7 @@ Inspect the generated Turing model code with `modelcode(TR)`.
 - `formula`: Regression formula (e.g., `@formula(y ~ x1 + x2)`)
 - `data`: DataFrame with response and predictors
 - `family`: Response distribution (Normal, Bernoulli, TDist, etc.)
-- `priors`: Prior distributions, standardised scale (defaults from `default_prior(family)` if omitted)
+- `priors`: Prior distributions, standardised scale (defaults from `scaled_default_prior(family, modeldata)` if omitted)
 - `weights`: Optional sampling weights
 
 # Example
@@ -57,7 +57,7 @@ fit!(model)
 function turing_glm(formula::FormulaTerm,
     data::DataFrame,
     family::Type{<:Distribution};
-    priors::RegressionPrior=default_prior(family),
+    priors::Union{Nothing,RegressionPrior}=nothing,
     weights::Union{Nothing, Vector{Float64}}=nothing)
 
     if family ∉ [Normal, TDist, Bernoulli, Poisson, NegativeBinomial]
@@ -69,6 +69,10 @@ function turing_glm(formula::FormulaTerm,
     # categorical contrasts are never re-derived from (possibly small/partial) new data.
     modeldata = extract_model_data(formula, data, weights)
     _, tf = standardise(modeldata, family)
+    # T21: predictors are centered-only now (transform.jl), so the plain std-scale
+    # default_prior no longer fits every raw-scale column — rescale per-column
+    # unless the caller supplied their own priors.
+    priors = isnothing(priors) ? scaled_default_prior(family, modeldata) : priors
 
     model_obj, model_code = cached_construct_model(family, modeldata)
 

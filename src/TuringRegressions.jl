@@ -39,8 +39,8 @@ using CategoricalArrays: categorical
 using CategoricalDistributions: UnivariateFinite
 using MixedModels: _ranef_refs
 
-include("prior.jl")
 include("formula_handlers.jl")
+include("prior.jl")
 include("transform.jl")
 include("reshape.jl")
 include("turingregression.jl")

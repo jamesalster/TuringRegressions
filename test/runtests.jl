@@ -22,6 +22,11 @@ const BENCH_SAMPLES = parse(Int, get(ENV, "TR_BENCH_SAMPLES", "2000"))
 const BENCH_WARMUP = parse(Int, get(ENV, "TR_BENCH_WARMUP", "2000"))
 const BENCH_NCHAINS = parse(Int, get(ENV, "TR_BENCH_NCHAINS", "2"))
 
+# T20: dev-loop subset — one Normal fit, one Bernoulli fit, the sleepstudy
+# mixedmodels benchmark fit. Skips everything else so T21/T22 can iterate
+# fast. `TR_DEV_SUBSET=true julia --project=. -e 'using Pkg; Pkg.test()'`
+const DEV_SUBSET = get(ENV, "TR_DEV_SUBSET", "false") == "true"
+
 @info "Setting up tests"
 
 mtcars = dataset("datasets", "mtcars")
@@ -72,6 +77,7 @@ end
 try # T11: keep going through sibling testsets on failure, still print benchmark table
 @testset "TuringRegressions" begin
 
+if !DEV_SUBSET
 @testset "Predict" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -111,7 +117,9 @@ try # T11: keep going through sibling testsets on failure, still print benchmark
         @test isapprox(glm_pred, tr_pred, atol=1.5)
     end
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "StatsAPI interface (T6)" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -170,7 +178,9 @@ end
         @test_throws ArgumentError fn(mod)
     end
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "draws API" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -186,7 +196,9 @@ end
     @test ndims(uncollapsed) == ndims(collapsed) + 1
     @test hasdim(uncollapsed, :chain)
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "Metrics" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -216,7 +228,9 @@ end
     @test outcome_as_distribution(mod_bin) isa UnivariateFinite
     @test_throws ArgumentError outcome_as_distribution(mod)
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "Model Comparison" begin
     Random.seed!(123)
     mod_full = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -238,7 +252,9 @@ end
     @test length(mc_vec.rank) == 2
     @test minimum(mc_vec.elpd_diff) == 0.0 # best model has elpd_diff 0
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "Show/summary output" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -267,7 +283,9 @@ end
     @test contains(re_output, "(SD)")
     @test contains(re_output, "Correlation")
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "Plots (Makie extension smoke test)" begin
     # Not substantive — just checks the Makie extension still loads and runs.
     Random.seed!(123)
@@ -280,7 +298,9 @@ end
     @test_nowarn pp_check_dens(mod)
     @test_nowarn pp_check_dens_overlay(mod; n_draws=20)
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "Warnings & errors" begin
     @test_throws ErrorException turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Gamma)
 
@@ -289,7 +309,9 @@ end
     @suppress fit!(mod; samples=50, warmup=50, nchains=1, quiet=true)
     @test_logs (:warn,) match_mode = :any model_warnings(mod)
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "fit! budget API (T16)" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -309,7 +331,9 @@ end
     @suppress fit!(mod; samples=120, warmup=0, nchains=2, quiet=true)
     @test size(mod.samples, 1) == 60
 end
+end # !DEV_SUBSET
 
+if !DEV_SUBSET
 @testset "Weighted fit (T10, V14)" begin
     Random.seed!(42)
     mod_unweighted = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
@@ -334,6 +358,7 @@ end
 
     @test all(z .< 1.0)
 end
+end # !DEV_SUBSET
 
 # --- Big fits (Fixed/Random effects) run last: heaviest, slowest testsets ---
 
@@ -357,6 +382,7 @@ end
         )
     end
 
+    if !DEV_SUBSET
     @testset "Poisson" begin
         Random.seed!(123)
         mod = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
@@ -394,6 +420,7 @@ end
             GLM.predict(glm_mod), Array(posterior_predict(mean, mod; type=:epred)), atol=15.0
         )
     end
+    end # !DEV_SUBSET
 
     @testset "Bernoulli" begin
         Random.seed!(123)
@@ -454,6 +481,7 @@ end
         @test size(corr) == (2, 2, size(corr, :iter))
     end
 
+    if !DEV_SUBSET
     @testset "intercept-only (1|Subject)" begin
         Random.seed!(123)
         mod = turing_glm(@formula(Reaction ~ 1 + Days + (1 | Subject)), sleepstudy, Normal)
@@ -481,8 +509,10 @@ end
         # Guards B4: slope-only ranef must not silently drop the real predictor
         @test_nowarn posterior_predict(mod; type=:epred)
     end
+    end # !DEV_SUBSET
 end
 
+if !DEV_SUBSET
 @testset "Random effects — Poisson (cbpp)" begin
     Random.seed!(123)
     mod = turing_glm(@formula(Incidence ~ 1 + Period + (1 | Herd)), cbpp, Poisson)
@@ -494,6 +524,7 @@ end
     ep = posterior_predict(mean, mod; type=:epred)
     @test all(Array(ep) .> 0) # Poisson mean is strictly positive
 end
+end # !DEV_SUBSET
 
 end # @testset "TuringRegressions"
 finally

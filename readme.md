@@ -1,9 +1,24 @@
 
 # TuringRegressions.jl
 
-An alternative and more fully featured version of [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/) for Bayesian regression.
+An alternative and more fully featured version of [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/) for Bayesian regression fits. Handles both fixed and random effects, including correlated intercepts and slopes.
 
-Uses DimArrays from `DimensionalData` for outputs, allowing easy indexing.
+It is deliberately fully featured and heavy, providing a convenient front-end to a large number of packages.
+
+Design Features:
+
+* Handles Normal, TDist, Binomial, Poisson, NegativeBinomial families
+* Fixed and Random effects supported, including varying slopes
+* Models run on standardised scale for performance to ensure correct outputs vs GLM/lme4/brms (three fits are exactly benchmarked in tests)
+* Priors are somewhat customisable, and specified on standardised scale
+* Model code dynamically constructed, can be viewed and exported
+* Outputs use `DimensionalData` for easy indexing
+* `PrettyTable` model summaries, with prediction metrics
+* Prediction on same or new data supported
+* `StatsAPI.RegressionModel` interface implemented as far as possible
+* Model comparison with LOO
+* Some `Makie` Plot recipes
+* Performance in NUTS optimised as far as posisble; ReverseDiff used for random effect models to improve performance
 
 ## Installation
 
@@ -172,20 +187,12 @@ Parameter extraction functions accept:
 * `n_draws=-1` - Number of draws (-1 for all)
 * `collapse=true` - Collapse chains into single dimension
 
-## Notes
-
-Priors are passed in at the standardised variable scale (mean 0, sd 1 predictors),
-not the original data's units — `TR.prior`, `prior_summary(TR)`, and `show(TR)`
-all print exactly what's in force.
-
-Accepted model families are `Normal`, `TDist`, `Bernoulli`, `Poisson`, and `NegativeBinomial`.
-
 ## Thanks
 
-This pacakge was heavily inspired by and uses small snippets of code from TuringGLM
-It also uses the power of [DimensionalData.jl](https://rafaqz.github.io/DimensionalData.jl/stable/) for its outputs.
+This pacakge was heavily inspired by and uses small snippets of code from TuringGLM. 
+
+The original was hand-written but the random-effect implementation, tidying up and docs were co-written with Claude.
 
 ## TODO
 
-See `SPEC.md` for the task list.
-
+Consider more prior customisability. In particular, the LKJ prior on correlated slopes is fixed at 1.0 which leads to the sleepstudy benchmark being slightly off the lme4/brms defaults.

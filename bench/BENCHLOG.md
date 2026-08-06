@@ -482,3 +482,81 @@ warm (fit only, δ=0.8): 2.47s
 
 max rhat: 1.004 ok
 
+## Summary — closed tasks (T14, T20, T21, T23-T36), branch `benchmark-improvements`
+
+Umbrella T22 (NUTS perf on mixedmodels-benchmark fit). Full detail in the runs
+above; this section is the one-line-per-task index SPEC.md now points to.
+
+- **T20** — targeted dev-test subset (one Normal fit, one Bernoulli fit,
+  mixedmodels-benchmark fit) so features don't require full `Pkg.test()` to
+  iterate on.
+- **T21** — tried dropping predictor standardisation (centering only) on a
+  branch. Rejected — no accuracy/speed win, C2 standardisation stays.
+- **T23** — built `bench/sleepstudy_bench.jl`, the fixed benchmark harness
+  (`Reaction ~ 1 + Days + (1 + Days | Subject)`, ~42 params) all T24-T36
+  changes were measured against.
+- **T24** — adtype sweep. Landed: `has_random_effects ? AutoReverseDiff(compile=true) : AutoForwardDiff()`
+  (V25). ReverseDiff wins 2-3.5x on any ranef model regardless of param count;
+  ForwardDiff wins fixef-only regardless of N. Mooncake/Enzyme rejected
+  (no warm win / runtime error).
+- **T25** — hoist ranef container indexing out of hot path via splatted
+  positional args. Reverted — flat vs baseline, no signal. Surfaced+fixed
+  missing `using ReverseDiff` (broke plain `using TuringRegressions` ranef fits).
+- **T26** — hand-rolled Normal likelihood vs `logpdf(MvNormal(...))`. Reverted
+  — inside noise band.
+- **T27/T28** — drop `diagm`/`MvNormal` machinery in ranef prior/transform.
+  Reverted — inside noise band.
+- **T29** — LANDED. Special-case single-predictor ranef slice to avoid a
+  4-alloc `sum(...;dims=2)[:]` pattern. Only isolated win clearing the noise
+  band (warm 2.06s→1.83s, ESS/sec up across all params).
+- **T30** — measured LKJCholesky bijector forward-path cost (~1.8μs/eval,
+  ~1-2% of gradient-eval budget). Not a meaningful driver — no code change.
+- **T31** — warmup=4000 vs default warmup=samples. +32% wall time, no
+  rhat/recovery gain. Default stays.
+- **T32** — target_acceptance δ=0.8 vs default 0.65. +31% wall time, no
+  divergences at either δ so nothing to fix. Default stays.
+- **T33** — fixed ranef sd/corr back-transform bug (`_ranef_transform_matrix`,
+  full `A·(D·R·D)·A'` instead of inconsistent elementwise scaling). Also
+  LKJ η 2.0→1.0. `Subject_sd Intercept` 38.81→29.14 vs lme4 gold 24.7. C9
+  re-verify of V3/V4/V13 vs GLM still outstanding.
+- **T35** — TTFX diagnostic. Cold ranef fit 32.7s splits ~55.7% generic lib
+  TTFX, ~27.6% per-model-type compile, ~16.8% bench-harness data load
+  (not package cost). Identified `@compile_workload` as the big lever → T14.
+- **T14** — landed `@compile_workload` warming one fixef-only Normal fit.
+  Cuts TTFX across ALL families/shapes (fixef-Normal 30.1s→6.0s, Bernoulli
+  28.7s→11.2s, Poisson 29.7s→11.3s, ranef-Normal 39.2s→18.3s). Rejected
+  precompiling ranef `fit!` (ReverseDiff segfaults on package-image reload)
+  and ranef construction-only precompile (net wash).
+- **T36** — JET/`@report_opt` confirmed no runtime dispatch in the hot
+  `logdensity` path; narrowed `Predictors.X` to `Matrix{Float64}` for
+  by-construction guarantee (no perf change). Surfaced+fixed array-form
+  `turing_glm(y, X, T)` being broken for all inputs (built wrong container
+  type, `MethodError`).
+
+Residual gap: `Subject_sd Intercept` 29.14 vs lme4 gold 24.7 is NOT a bug —
+see open task T34 (centered-parameterisation LKJ prior isn't flat in raw-scale
+corr under C2 standardisation).
+
+## Possible future todos (not started)
+
+- **T37** — Deterministic model names + precompiled shape table. Replace
+  `gensym(:turing_regression)` with a name derived from the model-cache-key
+  structure (family + ranef shape tuple), so a fixed table of common shapes
+  (fixef-only, `1|g`, `1+x|g`) can be `eval`'d and precompiled at package
+  load. Recovers part of the 7-12s per-shape compile. RISK: C6 warns shared
+  names corrupt AD/sampler caches — deterministic-per-shape is safe only if
+  identical shape ⇒ identical code, which V20's cache key already asserts.
+  Verify no cross-fit contamination.
+- **T38** — CONSIDER IF WORTH IT: shrink per-model-type compiled surface.
+  Hoist ranef transform (`diagm(σ)*L.L*z_raw`, model.jl:50) and likelihood
+  (model.jl:146) out of the generated `Expr` into ordinary package-level
+  functions that precompile normally. Only the thin `@model` wrapper stays
+  gensym'd. Must stay mean-zero (V23). GATE: any warm-time regression on the
+  T23 harness kills it.
+- **T39** — CONSIDER IF WORTH IT: kill codegen entirely — one generic
+  loop-based `@model` handling any ranef shape at runtime, no per-shape
+  `Expr`/`eval`. Would remove the whole 7-12s per-model-type compile AND make
+  the model fully precompilable, but CONTRADICTS C6 and risks type-instability
+  in the NUTS hot path. HARD GATE: warm speed is top priority (§G) —
+  prototype first, benchmark on T23, abandon on any serious warm regression.
+

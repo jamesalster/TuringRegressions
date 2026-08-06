@@ -180,6 +180,13 @@ all print exactly what's in force.
 
 Accepted model families are `Normal`, `TDist`, `Bernoulli`, `Poisson`, and `NegativeBinomial`.
 
+Random-effect correlation prior (`LKJCholesky(η=1)`) is flat on the
+*standardised*-scale correlation, not the raw-scale one — since predictors
+are standardised outside the model (see above), this can leave random-effect
+SD/correlation estimates slightly biased vs raw-scale tools like lme4/brms
+(e.g. sleepstudy `Subject_sd Intercept` recovers ~29 vs lme4's ~24.7). Known,
+not a bug — see `SPEC.md` V26.
+
 ## Thanks
 
 This pacakge was heavily inspired by and uses small snippets of code from TuringGLM

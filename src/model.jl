@@ -108,9 +108,20 @@ function _linear_model(modeldata::ModelData)
 
             if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
                 push!(terms, :($ranef_matrix[group_idx[:,$i], 1]))
-                push!(terms, :(sum($predictors .* $ranef_matrix[group_idx[:,$i], 2:end]; dims = 2)[:]))
+                n_slope = size(ranef.predictors.X, 2)
+                # The view is proven performance improvement, worth the extra lines
+                if n_slope == 1
+                    push!(terms, :(vec($predictors) .* $ranef_matrix[group_idx[:,$i], 2]))
+                else
+                    push!(terms, :(sum($predictors .* @view($ranef_matrix[group_idx[:,$i], 2:end]); dims = 2)[:]))
+                end
             elseif TuringRegressions.has_fixed_effects(ranef.predictors)
-                push!(terms, :(sum($predictors .* $ranef_matrix[group_idx[:,$i], :]; dims = 2)[:]))
+                n_slope = size(ranef.predictors.X, 2)
+                if n_slope == 1
+                    push!(terms, :(vec($predictors) .* $ranef_matrix[group_idx[:,$i], 1]))
+                else
+                    push!(terms, :(sum($predictors .* @view($ranef_matrix[group_idx[:,$i], :]); dims = 2)[:]))
+                end
             elseif ranef.predictors.has_intercept
                 push!(terms, :($ranef_matrix[group_idx[:,$i]]))
             end

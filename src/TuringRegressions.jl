@@ -20,6 +20,7 @@ import StatsAPI: RegressionModel
     leverage, cooksdistance, reconstruct, reconstruct!, predict!, loglikelihood, dof,
     mss, rss, nulldeviance, nullloglikelihood, aic, aicc, bic, r2, adjr2
 using Turing
+using ReverseDiff
 using PrettyTables
 using MixedModels
 using Random

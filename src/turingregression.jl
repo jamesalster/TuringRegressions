@@ -219,7 +219,7 @@ disables it. This is independent from `drop_warmup` in `draws`/`summary`, which 
 already-kept draws at extraction time.
 
 # Arguments
-- `sampler`: MCMC algorithm (default: NUTS())
+- `sampler`: MCMC algorithm (default: `NUTS()` w/ adtype auto-picked from `TR.modeldata` — `AutoReverseDiff(compile=true)` if random effects present, else `AutoForwardDiff()`; Pass `sampler=NUTS(;adtype=...)` to override.)
 - `parallel`: How to parallelize chains (default: MCMCThreads())
 - `samples`: Total kept draws across all chains, split over `nchains`, rounded up (default: 2000)
 - `nchains`: Number of chains (default: 4)
@@ -248,7 +248,7 @@ end
 
 function fit!(
     TR::TuringRegression{T};
-    sampler=NUTS(),
+    sampler=NUTS(; adtype=has_random_effects(TR.modeldata) ? AutoReverseDiff(; compile=true) : AutoForwardDiff()),
     parallel=MCMCThreads(),
     samples=2000,
     nchains=4,

@@ -344,3 +344,68 @@ warm (fit only):      1.85s
 
 max rhat: 1.012 ok
 
+## T14 — PrecompileTools workload
+
+Added `@compile_workload` (src/TuringRegressions.jl) warming one fixef-only
+Normal `turing_glm`+`fit!` (samples=1, warmup=1, nchains=1) at package build
+time. Targets T35's ~25s "generic" TTFX slice (Turing/DynamicPPL/AbstractMCMC/
+StatsModels/ForwardDiff machinery), shared across families/shapes regardless
+of which model triggers it.
+
+Isolated per-family TTFX (`using TuringRegressions` + first `turing_glm`+`fit!`
+in a fresh process, small synthetic data, not this bench's sleepstudy shape):
+
+| model | baseline (using+fit) | post-T14 | delta |
+|---|---|---|---|
+| fixef-only Normal (exact precompiled match) | 30.10s | 6.01s | −24.09s (5.0x) |
+| fixef-only Bernoulli | 28.65s | 11.22s | −17.43s (2.6x) |
+| fixef-only Poisson | 29.74s | 11.29s | −18.45s (2.6x) |
+| ranef-only Normal (intercept, ReverseDiff) | 39.17s | 18.25s | −20.92s (2.1x) |
+
+`using TuringRegressions` alone is flat (~5-5.5s both) — win is entirely in
+first-fit compile, as expected.
+
+Bernoulli/Poisson (neither precompiled) recover almost as much as the exact
+match — confirms the ~25s bucket is genuinely generic, not family-specific.
+Ranef recovers a real chunk too, purely from that shared slice — its own
+ReverseDiff-specific compile is NOT covered (see below) and still costs ~12-14s.
+
+**Rejected: precompiling ranef `fit!`/`sample()`.** `AutoReverseDiff` (ranef's
+V25 default) segfaults on package-image reload — confirmed with BOTH
+`compile=true` and `compile=false` (identical crash), and confirmed NOT a
+ranef-shape issue (ForwardDiff-on-ranef precompiles and reloads clean, just
+isn't the default path so wouldn't help real users). This is a
+Turing/DynamicPPL/ReverseDiff serialization limitation, not fixable from this
+package.
+
+**Rejected: precompiling ranef `turing_glm` construction only (no `fit!`).**
+Tried warming both ranef codegen shapes (intercept-only, correlated-slope) via
+construction-only calls (cheap, no NUTS compile). Measured effect: ranef fit
+time 14.14s → 12.82s (~1.3s), while precompile build time rose 33.0s → 34.7s
+(~1.6s). Net wash, and the 1.3s runtime delta sits inside this project's own
+established noise band (T26-29 above: <20% single-run swing = noise, not
+signal). Dropped — not worth the code.
+
+Full sleepstudy bench (below) confirms the win holds even for the
+correlated-slope shape, which is NOT covered by any precompiled model:
+
+## 2026-08-06T16:21:02.895 (post-T14)
+
+cold (compile + fit): 18.61s (baseline: 28.38s, −9.77s / 34%)
+warm (fit only):      1.89s (baseline: 1.85s, unchanged — precompile doesn't touch already-JIT'd warm path)
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 326.9 | 1.012 | 251.7 | 251.4 |
+| fixef Days | 303.0 | 1.004 | 10.55 | 10.5 |
+| fixef σ | 1070.1 | 1.003 | 25.87 | — |
+| Subject_sd Intercept | 413.0 | 1.0 | 28.72 | 24.7 |
+| Subject_sd Days | 318.6 | 1.001 | 6.34 | 5.9 |
+
+max rhat: 1.012 ok — param recovery unaffected by T14, as expected (precompile
+changes compile timing only, not model semantics).
+
+DECISION: keep T14 as implemented (fixef-only Normal `fit!` in the workload,
+nothing else). Real, substantial TTFX win across all families and even ranef
+shapes, at ~33s one-time added precompile cost per package build. ok
+

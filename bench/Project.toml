@@ -1,0 +1,8 @@
+[deps]
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+MCMCDiagnosticTools = "be115224-59cd-429b-ad48-344e309966f0"
+Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
+RDatasets = "ce6b1742-4840-55fa-b093-852dadbb1d8b"
+ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
+Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
+TuringRegressions = "77494a57-fde7-4bf0-b082-fcd68b811361"

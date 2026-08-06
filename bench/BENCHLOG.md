@@ -196,3 +196,18 @@ ReverseDiff by ~2-3.5x. Presence of ranef (not raw param count alone) looks
 like the right heuristic signal — proposing: `adtype = has_random_effects(md)
 ? AutoReverseDiff(compile=true) : AutoForwardDiff()`, both overridable via new
 `adtype` kwarg on `fit!`.
+## 2026-08-06T12:44:09.895
+
+cold (compile + fit): 32.5s
+warm (fit only):      2.15s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 286.5 | 1.012 | 251.7 | 251.4 |
+| fixef Days | 265.6 | 1.004 | 10.55 | 10.5 |
+| fixef σ | 937.9 | 1.003 | 25.87 | — |
+| Subject_sd Intercept | 362.0 | 1.0 | 28.72 | 24.7 |
+| Subject_sd Days | 279.2 | 1.001 | 6.34 | 5.9 |
+
+max rhat: 1.012 ok
+

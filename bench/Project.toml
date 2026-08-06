@@ -1,6 +1,9 @@
 [deps]
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
+DynamicPPL = "366bfd00-2699-11ea-058f-f148b4cae6d8"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+LogDensityProblems = "6fdf6af0-433a-55f7-b3ed-c6c6e0b8df7c"
 MCMCDiagnosticTools = "be115224-59cd-429b-ad48-344e309966f0"
 Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
 RDatasets = "ce6b1742-4840-55fa-b093-852dadbb1d8b"

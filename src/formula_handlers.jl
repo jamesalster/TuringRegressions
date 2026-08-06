@@ -3,8 +3,13 @@
 
 struct Predictors
     has_intercept::Bool
-    X::AbstractMatrix
+    X::Matrix{Float64}
     X_names::Union{Nothing,Vector{String}} #TODO would love to cut this
+
+    # Coerce to Matrix{Float64} at construction — NUTS hot path (T36) relies on this
+    # being concrete; any AbstractMatrix in (Int, view, transpose, ...) works the same,
+    # just converted once here instead of leaking an abstract eltype into the model.
+    Predictors(has_intercept, X, X_names) = new(has_intercept, convert(Matrix{Float64}, X), X_names)
 end
 struct RandomEffect
     variable::Symbol           # grouping variable (e.g., :subject)

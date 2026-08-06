@@ -113,9 +113,10 @@ function turing_glm(
     else
         X_names = ntuple(i -> Symbol(names[i]), length(names))
     end
-    table = (; NamedTuple{X_names}(eachcol(X))..., NamedTuple{(:y,)}([y])...)
+    df = DataFrame(X, collect(X_names))
+    df.y = y
     formula = term(:y) ~ sum(term.(X_names))
-    return turing_glm(formula, table, T; kwargs...)
+    return turing_glm(formula, df, T; kwargs...)
 end
 
 # Shared by Base.show(io,TR) and prior_summary(TR) — one place that knows how to

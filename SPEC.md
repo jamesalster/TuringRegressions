@@ -109,6 +109,7 @@ Types:
 - V23. Ranef components (`ranef_matrix` in `_random_effects`, model.jl) must be mean-zero by construction — no free param acts as extra mean shift (would be confounded with population fixed effect over same predictor → NUTS ridge, biased marginals). Population `α`/`β` are the only mean-carrying params; ranef branches add zero-mean deviations only (`diagm(σ)*L*z_raw` or `σ.*z_raw`).
 - V24. Post-`fit!`, `size(TR.samples, 1) == cld(samples, nchains)` exactly, regardless of `warmup`. Inexact division rounds up (realised total ≥ requested `samples`).
 - V25. `fit!` default `adtype` picked from `has_random_effects(TR.modeldata)`: ranef present → `AutoReverseDiff(compile=true)`, else → `AutoForwardDiff()`. Basis: T24 sweep showed ranef presence (not param count) determines which backend wins — see `bench/BENCHLOG.md`. User-supplied `sampler=NUTS(;adtype=...)` always overrides.
+- V26. KNOWN, not a bug: LKJ(η=1) corr prior (model.jl:47) is flat on std-scale ranef correlation, not raw-scale (C2 standardises outside model) — biases ranef SD/corr point estimates vs raw-scale tools (lme4/brms). Documented in readme.md Notes. See T34.
 
 ## §B BUGS
 
@@ -116,9 +117,8 @@ id|date|cause|fix
 
 ## §T TASKS
 
-T14|.|First `using TuringRegressions` / `Pkg.test()` pays full TTFX (Turing/DynamicPPL/model-macro compile) — separate latency source from the fixed T13 gensym issue (V20). Investigate `PrecompileTools.@compile_workload` block (small `turing_glm` fit, minimal `N`/`nchains`) in `src/TuringRegressions.jl`. Open question: does it help given `construct_model`'s model type is `eval`'d at runtime (gensym'd name), not load time — workload warms builder machinery (Turing/DynamicPPL/AD) but not a reusable compiled model type. Needs a think before implementing|V20
+T14,T20,T21,T23-T36|x|closed benchmark/perf work (adtype default V25, ranef sd/corr fix, TTFX precompile, type-stability). Summary + full run log: `bench/BENCHLOG.md` (branch `benchmark-improvements`)
 T17|.|`TR.link` field (predict.jl) — used internally, V1-bounded to the 5 families, not user-facing. Confirm it can stay internal / no action needed|V1
 T19|.|`fit!(quiet=false)` live progress bar not showing in VSCode Julia REPL. Likely needs a progress-capable logger (TerminalLoggers) or VSCode's ProgressLogging integration. Low priority — sort later|
-T20|x|Full Pkg.test() too slow for dev iteration. Add small subset: one Normal fit, one Bernoulli fit, mixedmodels benchmark fit only — reusable runner for T21/T22 dev loop|C10
-T21|.|Branch: drop predictor standardisation (C2) inside model, keep centering only. Compare fit time + accuracy vs current std approach (V3/V4/V13 tolerances) using T20 subset|C2,V3,V4,V13,T20
-T22|.|Post-compile NUTS perf on mixedmodels-benchmark fit v slow vs Stan/lme4 — profile + improve. Use T20 subset to iterate|T20
+T34|.|Think about how to pass ranef corr prior (LKJ η) in — currently hardcoded 1.0 (model.jl:47), known std-scale-vs-raw-scale flatness issue (V26). Options TBD: expose η / whole corr prior as `RegressionPrior` field, reparameterise, or leave as documented divergence. Also more widely: think how to let user pass more specific priors in generally (brms-style — per-term/per-coef, not just per-role) instead of current one-prior-per-role `RegressionPrior`|C2,V10,V26
+T40|.|Rationalise `src/transform.jl` — `Transform`/`LinearTransform`/`compute_transform`/`apply_transform`/`standardise`/`unstandardise_data` layout is a pain to work in (T33 touched it). Think about a simpler structure once T34 settles (touches same file)|T33,T34

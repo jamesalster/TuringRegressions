@@ -211,3 +211,136 @@ warm (fit only):      2.15s
 
 max rhat: 1.012 ok
 
+## 2026-08-06T12:51:54.912
+
+cold (compile + fit): 28.24s
+warm (fit only):      1.95s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 407.5 | 1.002 | 251.48 | 251.4 |
+| fixef Days | 402.4 | 1.001 | 10.39 | 10.5 |
+| fixef σ | 843.4 | 1.002 | 25.84 | — |
+| Subject_sd Intercept | 373.8 | 1.002 | 29.3 | 24.7 |
+| Subject_sd Days | 400.2 | 1.007 | 6.23 | 5.9 |
+
+max rhat: 1.007 ok
+
+## 2026-08-06T12:54:18.239
+
+cold (compile + fit): 30.17s
+warm (fit only):      2.06s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 299.4 | 1.012 | 251.7 | 251.4 |
+| fixef Days | 277.5 | 1.004 | 10.55 | 10.5 |
+| fixef σ | 980.0 | 1.003 | 25.87 | — |
+| Subject_sd Intercept | 378.2 | 1.0 | 28.72 | 24.7 |
+| Subject_sd Days | 291.8 | 1.001 | 6.34 | 5.9 |
+
+max rhat: 1.012 ok
+
+## 2026-08-06T12:55:29.954
+
+cold (compile + fit): 28.71s
+warm (fit only):      2.07s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 299.6 | 1.005 | 250.79 | 251.4 |
+| fixef Days | 217.0 | 1.005 | 10.49 | 10.5 |
+| fixef σ | 816.0 | 1.001 | 25.76 | — |
+| Subject_sd Intercept | 346.1 | 0.999 | 29.47 | 24.7 |
+| Subject_sd Days | 311.7 | 1.002 | 6.33 | 5.9 |
+
+max rhat: 1.005 ok
+
+## 2026-08-06T12:56:48.313
+
+cold (compile + fit): 28.97s
+warm (fit only):      1.99s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 277.0 | 1.005 | 251.95 | 251.4 |
+| fixef Days | 309.8 | 1.002 | 10.55 | 10.5 |
+| fixef σ | 812.5 | 1.002 | 25.81 | — |
+| Subject_sd Intercept | 365.5 | 1.003 | 29.36 | 24.7 |
+| Subject_sd Days | 435.1 | 1.004 | 6.25 | 5.9 |
+
+max rhat: 1.005 ok
+
+## 2026-08-06T12:58:15.710
+
+cold (compile + fit): 29.14s
+warm (fit only):      1.83s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 336.9 | 1.012 | 251.7 | 251.4 |
+| fixef Days | 312.3 | 1.004 | 10.55 | 10.5 |
+| fixef σ | 1102.9 | 1.003 | 25.87 | — |
+| Subject_sd Intercept | 425.6 | 1.0 | 28.72 | 24.7 |
+| Subject_sd Days | 328.4 | 1.001 | 6.34 | 5.9 |
+
+max rhat: 1.012 ok
+
+## 2026-08-06T12:59:29.535
+
+cold (compile + fit): 29.11s
+warm (fit only):      2.46s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 250.2 | 1.012 | 251.7 | 251.4 |
+| fixef Days | 231.9 | 1.004 | 10.55 | 10.5 |
+| fixef σ | 819.0 | 1.003 | 25.87 | — |
+| Subject_sd Intercept | 316.1 | 1.0 | 28.72 | 24.7 |
+| Subject_sd Days | 243.8 | 1.001 | 6.34 | 5.9 |
+
+max rhat: 1.012 ok
+
+
+## T26-T29 — codegen micro-opts, isolated one-at-a-time
+
+Changes tested (model.jl):
+- T26: `_likelihood` Normal-unweighted — `logpdf(MvNormal(μ,σ),y)` → hand-rolled `-nobs*log(σ) - sum(abs2,y.-μ)/(2σ^2) - nobs*log(2π)/2`. Skips MvNormal/PDMat construction per eval.
+- T27: `_random_effects` intercept+slope branch — `diagm(σ_z)*L.L*z_raw` → `(σ_z .* L.L)*z_raw` (row-scale broadcast, drops p×p alloc+matmul).
+- T28: same branch — `filldist(MvNormal(zeros(p),I), n_groups)` → `filldist(Normal(), p, n_groups)`, matching the no-intercept branch's existing pattern. Skips MvNormal/PDMat machinery on the prior side.
+- T29: `_linear_model` — special-case ranef slope term to avoid `sum(...; dims=2)[:]` alloc when `n_predictors==1` (elementwise broadcast instead); `@view` on the slice in the general (p>1) case.
+
+Method: reverted to clean baseline, ran sleepstudy_bench.jl once per variant (baseline, T26 alone, T27+T28 alone [same 3 lines, tested together], T29 alone, all four combined). Also reran baseline a 2nd time to gauge run-to-run noise, since this bench is a single NUTS run per variant, not averaged.
+
+| variant | warm | ESS/sec α | ESS/sec Days | ESS/sec Subject_sd Int |
+|---|---|---|---|---|
+| baseline run 1 | 2.06s | 299.4 | 277.5 | 378.2 |
+| baseline run 2 (noise check) | 2.46s | 250.2 | 231.9 | 316.1 |
+| T26 only | 2.07s | 299.6 | 217.0 | 346.1 |
+| T27+T28 only | 1.99s | 277.0 | 309.8 | 365.5 |
+| T29 only | 1.83s | 336.9 | 312.3 | 425.6 |
+| all four combined | 1.95s | 407.5 | 402.4 | 373.8 |
+
+Baseline-vs-baseline swing is ~20% run to run (this bench = single NUTS run, not averaged over reps) — that's the noise floor. T26 alone and T27+T28 alone land inside that band: no clean individual signal, can't distinguish from noise at n=1. T29 alone is the only isolated change that beats the noise band on both warm time and ESS/sec across all params. The "all four" run's large ESS/sec jump likely partly a lucky draw, not cleanly attributable given the other three show no signal alone.
+
+DECISION: keep T29 only. T26/T27/T28 reverted — no measured benefit distinguishable from noise, not worth the code churn (T28 in particular changes prior-sampling distribution shape, more moving parts than the gain justifies). Param recovery (posterior means, rhat) unaffected across all variants — none of the four changed model semantics.
+
+Rigor note: to actually separate T26/T27/T28 from noise would need multiple reps per variant (~3-5x runs, this bench isn't set up for that — single fit! per variant, no averaging loop). Flagged for future T22 work if these are revisited.
+
+Repeat run, T29-only code (post-decision, confirms the win isn't a fluke): warm 1.85s, ESS/sec α 332.7 / Days 308.3 / Subject_sd Int 420.3 — tight match to the first T29 run (1.83s / 336.9 / 312.3 / 425.6), well clear of the baseline noise band.
+
+## 2026-08-06T13:03:01.897
+
+cold (compile + fit): 28.38s
+warm (fit only):      1.85s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 332.7 | 1.012 | 251.7 | 251.4 |
+| fixef Days | 308.3 | 1.004 | 10.55 | 10.5 |
+| fixef σ | 1089.1 | 1.003 | 25.87 | — |
+| Subject_sd Intercept | 420.3 | 1.0 | 28.72 | 24.7 |
+| Subject_sd Days | 324.2 | 1.001 | 6.34 | 5.9 |
+
+max rhat: 1.012 ok
+

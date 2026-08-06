@@ -409,3 +409,76 @@ DECISION: keep T14 as implemented (fixef-only Normal `fit!` in the workload,
 nothing else). Real, substantial TTFX win across all families and even ranef
 shapes, at ~33s one-time added precompile cost per package build. ok
 
+## T30 — LKJCholesky bijector cost (diagnostic, no model.jl edit)
+
+Isolated forward-path cost of `L_ranef ~ LKJCholesky(2, 1.0)` (model.jl:47) —
+bijector constrain transform + logabsdetjac + logpdf — via
+`bench/t30_lkj_bijector_scratch.jl` (200k reps, warmed up first, p=2 matching
+sleepstudy's Intercept+Days correlated-slope shape):
+
+| op | cost |
+|---|---|
+| bijector transform | 699.0 ns |
+| logabsdetjac | 501.8 ns |
+| logpdf | 614.9 ns |
+| total (forward path) | 1815.7 ns |
+
+Backed out a rough per-gradient-eval budget from the T29 warm-fit baseline
+(1.85s, 1000 draws/chain, MCMCThreads wall time ≈ per-chain time): at 10-20
+leapfrog steps/draw (typical NUTS range), budget is ~92.5-185 μs/eval, so the
+LKJ forward path is ~1-2% of it. Does NOT include reverse-mode AD tape
+overhead for differentiating through the bijector (ReverseDiff is the default
+adtype for ranef models, V25) — true cost is somewhat higher than this
+forward-only number, but even a few-x multiplier stays well under 10%.
+
+CONCLUSION: LKJCholesky bijector is not a meaningful driver of NUTS slowness
+on this benchmark. Not worth pursuing further — no code change. T22's
+remaining gap (mixedmodels-benchmark fit still slow vs Stan/lme4) lies
+elsewhere (T31 warmup budget, T32 target_acceptance, or T36-T39 codegen/TTFX
+work), not in the corr prior's transform cost.
+
+## 2026-08-06T16:31:12.868 — T31 warmup=4000 (1000/chain) vs baseline warmup=2000 (500/chain)
+
+warm (fit only, warmup=4000): 2.5s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 269.9 | 1.003 | 251.42 | 251.4 |
+| fixef Days | 228.8 | 1.001 | 10.53 | 10.5 |
+| fixef σ | 754.8 | 1.002 | 25.86 | — |
+| Subject_sd Intercept | 301.9 | 1.001 | 28.86 | 24.7 |
+| Subject_sd Days | 287.9 | 1.004 | 6.31 | 5.9 |
+
+max rhat: 1.004 ok
+
+T32 CONCLUSION: target_acceptance δ=0.8 costs +31% wall time (2.47s vs 1.89s
+baseline) for no gain — rhat already fine at baseline (max 1.012), stays fine
+here (max 1.004); ESS/sec drops across all params (more/smaller leapfrog
+steps per draw eats the budget faster than useful-draws increase); param
+recovery unchanged, Subject_sd Intercept still ~28.9 vs gold 24.7 (T34 bias,
+unrelated to step-size tuning — no divergences at either δ so there was
+nothing for a higher target-accept to fix here). Default `NUTS()` δ=0.65
+stays — no evidence this benchmark needs the brms/Stan ranef-tuned 0.8.
+
+T31 CONCLUSION: warmup=4000 (1000/chain) costs +32% wall time (2.5s vs 1.89s
+baseline) for no real gain — rhat already fine at baseline (max 1.012), stays
+fine here (max 1.004); param recovery unchanged, Subject_sd Intercept still
+~28.9 vs gold 24.7 (that's the T34 centered-LKJ bias, not undercooked
+adaptation). ESS/sec drops across the board since eval count rose faster than
+useful-draws gained. Default `warmup=samples` (C1) stays as-is — no evidence
+this benchmark is warmup-starved.
+
+## 2026-08-06T16:33:29.215 — T32 target_acceptance δ=0.8 vs baseline δ=0.65 (default)
+
+warm (fit only, δ=0.8): 2.47s
+
+| param | ESS/sec | rhat | posterior mean | gold (lme4 REML) |
+|---|---|---|---|---|
+| fixef α | 219.8 | 1.002 | 251.06 | 251.4 |
+| fixef Days | 214.0 | 1.002 | 10.47 | 10.5 |
+| fixef σ | 517.9 | 1.0 | 25.86 | — |
+| Subject_sd Intercept | 298.7 | 1.0 | 28.94 | 24.7 |
+| Subject_sd Days | 211.8 | 1.004 | 6.17 | 5.9 |
+
+max rhat: 1.004 ok
+

@@ -57,22 +57,16 @@ include("comparison.jl")
 include("plots.jl")
 include("statsapi.jl")
 
-# T14: warm the ~25s generic Turing/DynamicPPL/AbstractMCMC/StatsModels compile
-# (T35), so the first user `turing_glm`+`fit!` doesn't pay it. `samples=1,
-# warmup=1, nchains=1` — only need each code path executed once. `turing_glm`
-# eval's a fresh model function at runtime (V20); calling it and `fit!` in the
-# same function body hits a world-age gap (see bench/sleepstudy_bench.jl
-# comment), so `fit!` goes through `Base.invokelatest`.
+# Warms the ~25s generic Turing/DynamicPPL/AbstractMCMC/StatsModels compile so the
+# first user `turing_glm`+`fit!` doesn't pay it. `turing_glm` eval's a fresh model
+# function at runtime; calling it and `fit!` in the same function body hits a
+# world-age gap (see bench/sleepstudy_bench.jl), so `fit!` goes through
+# `Base.invokelatest`.
 #
-# Ranef `fit!`/`sample()` deliberately NOT precompiled: `AutoReverseDiff`
-# (ranef's V25 default, either compile=true or compile=false) segfaults on
-# package-image reload — a Turing/DynamicPPL serialization limitation, not
-# fixable here. Ranef `turing_glm` construction-only (no `fit!`) was also
-# measured and dropped — its ~1.3s runtime win was within this project's own
-# noise band (BENCHLOG T26-29 precedent: <20% single-run swing = noise) while
-# still costing ~1.6s more precompile time every build, a wash not worth the
-# code. Ranef models still benefit substantially (~34s→~14s cold fit, see
-# bench/BENCHLOG.md T14 entry) purely from the shared generic slice below.
+# Ranef `fit!`/`sample()` NOT precompiled: its default adtype (AutoReverseDiff)
+# segfaults on package-image reload — a Turing/DynamicPPL serialization
+# limitation, not fixable here. Ranef models still benefit substantially from
+# the shared generic slice below (see bench/BENCHLOG.md).
 @compile_workload begin
     df = DataFrame(y=[1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
         x=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],

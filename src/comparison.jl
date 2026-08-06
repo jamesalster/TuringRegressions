@@ -2,11 +2,11 @@
     pointwise_loglik(TR::TuringRegression) -> Array{Float64,3}
 
 Per-observation log-likelihood, `(iter, chain, obs)` — `psis_loo`'s only input.
-Computed post-hoc (not inside the `@model`, which uses `Turing.@addlogprob!`
-and has no observed VarNames for DynamicPPL to track pointwise, V19). Reuses
-`linpred` (already handles fixef + random effects) then converts back to the
-model's internal standardised-y scale, since that's the scale the likelihood
-was actually evaluated on during sampling.
+Computed post-hoc: the `@model` uses `Turing.@addlogprob!`, so it has no observed
+VarNames for DynamicPPL to track pointwise. Reuses `linpred` (already handles
+fixef + random effects) then converts back to the model's internal
+standardised-y scale, since that's the scale the likelihood was actually
+evaluated on during sampling.
 """
 function pointwise_loglik(TR::TuringRegression{T}) where {T}
     isnothing(TR.samples) && throw(ArgumentError("Model has not been fitted."))

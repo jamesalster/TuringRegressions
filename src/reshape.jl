@@ -1,5 +1,5 @@
 
-#### Splitting the flat sampled-VarName DimArray into named layers (T3 step 4)
+#### Splitting the flat sampled-VarName DimArray into named layers
 # `reshape_params` is pure structure: flat raw array -> DimStack of standardised-scale
 # layers. `unstandardise` (below) is pure rescale: standardised DimStack -> original-scale
 # DimStack. Kept separate so a bug in one is easy to isolate from the other.
@@ -111,7 +111,7 @@ end
 """
     reshape_params(raw::DimArray, md::ModelData, family) -> DimStack
 
-Split the flat `VarName`-keyed sampler output (`DimArray(TR.samples)`, R10) into named,
+Split the flat `VarName`-keyed sampler output (`DimArray(TR.samples)`) into named,
 standardised-scale layers: `:fixef` (α, β, aux, in that order), and per ranef term a
 `:{group}` matrix (`:effect` × `:group`) plus its `:{group}_sd` / `:{group}_corr`
 companions. Pure structural reshuffle — no rescaling, see `unstandardise`.

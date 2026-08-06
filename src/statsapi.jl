@@ -1,6 +1,7 @@
 """
-StatsAPI/StatsBase `RegressionModel` interface for `TuringRegression`. See SPEC.md T6 for
-the three-group breakdown this file follows (implement / no-analogue / MLE-only).
+StatsAPI/StatsBase `RegressionModel` interface for `TuringRegression`. Three groups:
+implemented point-estimate methods, no-Bayesian-analogue errors, MLE-only-statistic
+errors.
 
 Posterior-based analogues stand in for point-estimate methods: `coef` is the posterior
 mean, `stderror`/`vcov` come from the posterior draws' covariance, etc. `predict` is the
@@ -16,11 +17,9 @@ function _posterior_mean_warning(fn::Symbol)
           "Use `posterior_predict`/`draws` for the full posterior." maxlog = 1 _id = fn
 end
 
-# StatsAPI methods only ever describe the fixed-effects design (like MixedModels.jl's
-# `modelmatrix`/`coef`) — but unlike `coef`/`fitted`/`residuals`, which stay correct by
-# routing through `posterior_predict` (which already folds in random effects via TR.z),
-# `modelmatrix` has no way to represent the Z structure at all. Returning just TR.modeldata.predictors.X would
-# silently look like the whole design; error instead of misleading the caller.
+# `coef`/`fitted`/`residuals` stay correct with random effects by routing through
+# `posterior_predict` (folds in Z). `modelmatrix` has no way to represent Z at all —
+# returning just the fixef X would silently look like the whole design, so error instead.
 function _error_if_random_effects(TR::TuringRegression, fn::Symbol)
     has_random_effects(TR) && throw(ArgumentError(
         "$fn(TR) is not meaningful for a model with random effects — it can only " *
@@ -159,11 +158,9 @@ function predict(TR::TuringRegression, X=TR.modeldata.predictors.X; kwargs...)
     return _point_pred(TR, X; type=:epred, kwargs...)
 end
 
-# `vif`/`gvif` (StatsModels' generic `RegressionModel` methods, inherited automatically
-# since TuringRegression <: RegressionModel) rely on `modelmatrix` containing an explicit
-# all-ones intercept column to detect the intercept — ours doesn't (α is fit separately,
-# see turing_glm/extract_model_data), so the inherited method would always throw the
-# wrong reason ("no intercept term") even when one exists. Override with an accurate error.
+# `vif`/`gvif` (inherited from StatsModels' generic RegressionModel) detect the intercept
+# via an explicit all-ones column in `modelmatrix` — ours has none (α is fit separately),
+# so the inherited method always throws the wrong reason. Override with an accurate error.
 for fn in (:vif, :gvif)
     @eval function $fn(::TuringRegression, args...; kwargs...)
         throw(ArgumentError(

@@ -6,9 +6,9 @@ struct Predictors
     X::Matrix{Float64}
     X_names::Union{Nothing,Vector{String}} #TODO would love to cut this
 
-    # Coerce to Matrix{Float64} at construction — NUTS hot path (T36) relies on this
-    # being concrete; any AbstractMatrix in (Int, view, transpose, ...) works the same,
-    # just converted once here instead of leaking an abstract eltype into the model.
+    # Coerce to Matrix{Float64} at construction — the NUTS hot path needs a concrete
+    # type; any AbstractMatrix in (Int, view, transpose, ...) works the same, just
+    # converted once here instead of leaking an abstract eltype into the model.
     Predictors(has_intercept, X, X_names) = new(has_intercept, convert(Matrix{Float64}, X), X_names)
 end
 struct RandomEffect
@@ -26,8 +26,8 @@ struct ModelData
     weights::Union{Nothing,Vector{Float64}}
 end
 
-# Derived flags — replace the old (deleted) ModelInfo struct. Multiple-dispatch
-# accessors so callers don't need to know whether they hold a ModelData or a TR.
+# Multiple-dispatch accessors — callers don't need to know whether they hold a
+# ModelData or a TuringRegression.
 has_intercept(md::ModelData) = md.predictors.has_intercept
 has_fixed_effects(p::Predictors) = size(p.X, 2) > 0
 has_fixed_effects(re::RandomEffect) = has_fixed_effects(re.predictors)
@@ -49,7 +49,6 @@ function extract_predictors(term::MatrixTerm, d::NamedTuple)
     return Predictors(term_has_intercept, X, X_names)
 end
 
-# Get model data out, y, X and Z. Thanks to claude for a bit of help
 function extract_model_data(formula, data, weights=nothing)
     # Apply schema - validates and types everything
     f = apply_schema(formula, schema(formula, data), MixedModel)
@@ -89,7 +88,6 @@ function _ranef_group_values(rhs::InteractionTerm, d::NamedTuple)
     return [join(row, ":") for row in zip(columns...)]
 end
 
-# Get random effect datastructure from formula
 function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
     # Get variable name - handle simple and interaction terms
     variable = if term.rhs isa CategoricalTerm

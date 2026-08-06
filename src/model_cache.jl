@@ -1,21 +1,17 @@
-#### Cache for gensym'd/eval'd model functions (T13)
+#### Cache for gensym'd/eval'd model functions
 
-# construct_model gensyms+evals a fresh model type per call (see model.jl), needed
-# because DynamicPPL dispatches on typeof(f) and shared names corrupt AD/sampler
-# caches across structurally different models (R11). But identical specs fit
-# repeatedly (e.g. same formula/ranef shape) shouldn't pay that ~25s recompile
-# every time (T13). Key on everything baked into the generated Expr as a literal
-# (R12, R13): family, ModelData's derived structural bools, per-ranef shape.
-# Priors are now runtime model args (T3a, §5.1), not interpolated literals, so
-# they're deliberately NOT part of the key — different priors, same structural
-# shape, share one compiled model.
+# DynamicPPL dispatches on typeof(f), so shared model names corrupt AD/sampler caches
+# across structurally different models — each shape needs its own gensym. But refitting
+# the same shape shouldn't re-pay the ~25s compile, so key on everything baked into the
+# Expr as a literal: family, structural bools, per-ranef shape. Priors are runtime args,
+# not literals — excluded from the key so different priors on one shape reuse one model.
 const MODEL_CACHE = Dict{Any,Tuple{Function,Expr}}()
 const MODEL_CACHE_LOCK = ReentrantLock()
 
 function _ranef_cache_key(ranef::RandomEffect)
-    # Generated symbols are positional (Symbol("σ_z_",i), not the group's variable name,
-    # model.jl) — two ranef terms with the same shape but different grouping-variable
-    # names compile to identical code, so `variable` is deliberately not part of the key.
+    # Generated symbols are positional (σ_z_<i>, model.jl), not the group's variable
+    # name — two ranef terms with the same shape but different grouping-variable names
+    # compile to identical code, so `variable` isn't part of the key.
     n_predictors = has_fixed_effects(ranef.predictors) ? size(ranef.predictors.X, 2) : 0
     return (ranef.predictors.has_intercept, has_fixed_effects(ranef.predictors), n_predictors)
 end

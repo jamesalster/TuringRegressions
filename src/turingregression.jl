@@ -232,9 +232,9 @@ already-kept draws at extraction time.
 fit!(model, samples=4000, nchains=4)  # 1000 kept per chain
 ```
 """
-# Slim helper (§5.3): derives the grouping arrays (n_groups/group_idx/group_predictors)
-# from ModelData.Z once, then calls the model with its unpacked-argument signature.
-# Shared with psis_loo (comparison.jl), which needs the same conditioned model.
+# Derives the grouping arrays (n_groups/group_idx/group_predictors) from ModelData.Z
+# once, then calls the model with its unpacked-argument signature. Shared with psis_loo
+# (comparison.jl), which needs the same conditioned model.
 function _build_model_with_data(TR::TuringRegression)
     md = apply_transform(TR.tf, TR.modeldata)
     Z = md.Z
@@ -273,9 +273,9 @@ function fit!(
 
     # Raw standardised-scale sampled params straight off the chain, stacked into
     # (iter,chain,param) with vector/matrix VarNames split into indices (`β[1]`,
-    # `L.L[2,1]`, ...) — R10, no model return statement needed. `reshape_params` splits
-    # this flat array into named layers (still standardised scale); `unstandardise`
-    # then back-transforms those layers to the original data scale (V10).
+    # `L.L[2,1]`, ...), no model return statement needed. `reshape_params` splits this
+    # flat array into named layers (still standardised scale); `unstandardise` then
+    # back-transforms those layers to the original data scale.
     raw = DimArray(TR.samples)
     std_params = reshape_params(raw, TR.modeldata, T)
     TR.parameters = unstandardise(std_params, TR.tf, TR.modeldata, T)

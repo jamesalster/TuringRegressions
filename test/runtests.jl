@@ -22,9 +22,9 @@ const BENCH_SAMPLES = parse(Int, get(ENV, "TR_BENCH_SAMPLES", "2000"))
 const BENCH_WARMUP = parse(Int, get(ENV, "TR_BENCH_WARMUP", "2000"))
 const BENCH_NCHAINS = parse(Int, get(ENV, "TR_BENCH_NCHAINS", "2"))
 
-# T20: dev-loop subset — one Normal fit, one Bernoulli fit, the sleepstudy
-# mixedmodels benchmark fit. Skips everything else so T21/T22 can iterate
-# fast. `TR_DEV_SUBSET=true julia --project=. -e 'using Pkg; Pkg.test()'`
+# Dev-loop subset — one Normal fit, one Bernoulli fit, the sleepstudy mixedmodels
+# benchmark fit. Skips everything else for fast iteration.
+# `TR_DEV_SUBSET=true julia --project=. -e 'using Pkg; Pkg.test()'`
 const DEV_SUBSET = get(ENV, "TR_DEV_SUBSET", "false") == "true"
 
 @info "Setting up tests"
@@ -67,14 +67,14 @@ function record_benchmark!(model_name, param_name, ours, canonical)
 end
 
 # Fit-time table: wall-clock seconds per full-budget fit. First recorded fit
-# eats TTFX compile (T14), so read the first row as an upper bound, not a like-for-like.
+# eats TTFX compile, so read the first row as an upper bound, not a like-for-like.
 const TIMING_ROWS = NamedTuple[]
 
 function record_timing!(model_name, seconds)
     push!(TIMING_ROWS, (model=model_name, seconds=round(seconds; digits=1)))
 end
 
-try # T11: keep going through sibling testsets on failure, still print benchmark table
+try # keep going through sibling testsets on failure, still print benchmark table
 @testset "TuringRegressions" begin
 
 if !DEV_SUBSET
@@ -90,7 +90,7 @@ if !DEV_SUBSET
         @test_nowarn posterior_predict(mod, new_data) # new DataFrame
     end
 
-    @testset "type variants and link relations (V5, V6)" begin
+    @testset "type variants and link relations" begin
         linp = posterior_predict(mod; type=:linpred)
         ep = posterior_predict(mod; type=:epred)
         post = posterior_predict(mod; type=:posterior)
@@ -109,7 +109,7 @@ if !DEV_SUBSET
         @test isapprox(Array(linp), log.(Array(ep)))
     end
 
-    @testset "new_data uses raw scale, no re-standardisation (V15)" begin
+    @testset "new_data uses raw scale, no re-standardisation" begin
         new_data = mtcars[3:8, :]
         glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)
         glm_pred = GLM.predict(glm_mod, new_data)
@@ -120,7 +120,7 @@ end
 end # !DEV_SUBSET
 
 if !DEV_SUBSET
-@testset "StatsAPI interface (T6)" begin
+@testset "StatsAPI interface" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
     quickfit!(mod)
@@ -156,7 +156,7 @@ if !DEV_SUBSET
     lp = @test_logs (:warn, r"posterior_predict") linearpredictor(mod)
     @test lp isa Vector{Float64}
     @test length(lp) == 32
-    @test isapprox(lp, fitted(mod)) # identity link (Normal): linpred == epred (V5)
+    @test isapprox(lp, fitted(mod)) # identity link (Normal): linpred == epred
 
     @test isnothing(offset(mod))
 
@@ -312,7 +312,7 @@ end
 end # !DEV_SUBSET
 
 if !DEV_SUBSET
-@testset "fit! budget API (T16)" begin
+@testset "fit! budget API" begin
     Random.seed!(123)
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
 
@@ -334,7 +334,7 @@ end
 end # !DEV_SUBSET
 
 if !DEV_SUBSET
-@testset "Weighted fit (T10, V14)" begin
+@testset "Weighted fit" begin
     Random.seed!(42)
     mod_unweighted = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
     quickfit!(mod_unweighted)
@@ -347,8 +347,8 @@ if !DEV_SUBSET
 
     # weights≡1 is mathematically identical to unweighted, but `_likelihood`'s weighted
     # per-obs `@addlogprob!` loop vs its unweighted vectorized `MvNormal` logpdf take a
-    # different numeric path through NUTS, so posterior means at N=300 land close but not
-    # bit-identical (T12). Compare in pooled-SD units instead of a raw atol so the check
+    # different numeric path through NUTS, so posterior means land close but not
+    # bit-identical. Compare in pooled-SD units instead of a raw atol so the check
     # scales with actual MCMC noise rather than each param's raw magnitude.
     u_mean = Array(draws(mean, mod_unweighted, :fixef))
     w_mean = Array(draws(mean, mod_weighted, :fixef))
@@ -538,7 +538,7 @@ finally
     println()
     println("="^78)
     println("FIT TIMINGS: wall-clock seconds per full-budget fit (samples=BENCH_SAMPLES total, warmup=BENCH_WARMUP total, nchains=BENCH_NCHAINS)")
-    println("First row includes TTFX compile (T14) — treat as upper bound")
+    println("First row includes TTFX compile — treat as upper bound")
     println("="^78)
     pretty_table(DataFrame(TIMING_ROWS); column_labels=["model", "seconds"])
 end # try

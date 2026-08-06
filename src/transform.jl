@@ -1,5 +1,5 @@
 
-#### Affine standardisation, computed once outside the model (T3a)
+#### Affine standardisation, computed once outside the model
 # StatsBase.ZScoreTransform (fit/transform/reconstruct) does the per-column mean/std
 # bookkeeping for us, and guards zero-variance columns (scale→1.0, not division by
 # zero) for free — no need to hand-roll it.
@@ -109,11 +109,11 @@ function _unstandardise_fixef(std::DimArray, tf::Transform, md::ModelData, famil
     return DimArray(vcat(parts...), (Dim{:fixef}(names), Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain)))
 end
 
-# Linear map from std-scale ranef-effect vector to original-scale (V10/V21). Row 1
-# (Intercept, only when both intercept and slopes present) also recenters from
-# std-scale (mean-X) back to raw X=0 — `-mean_x_j*(y/sd_x_j)` per slope column —
-# since lme4's gold standard fits raw X directly and carries no such shift. Slope
-# rows are plain elementwise `y/sd_x` scaling, no cross terms.
+# Linear map from std-scale ranef-effect vector to original-scale. Row 1 (Intercept,
+# only when both intercept and slopes present) also recenters from std-scale (mean-X)
+# back to raw X=0 — `-mean_x_j*(y/sd_x_j)` per slope column — since lme4's gold standard
+# fits raw X directly and carries no such shift. Slope rows are plain elementwise
+# `y/sd_x` scaling, no cross terms.
 function _ranef_transform_matrix(names, mean_x, sd_x, y, has_int::Bool)
     n = length(names)
     if has_int && n > 1
@@ -128,10 +128,10 @@ function _ranef_transform_matrix(names, mean_x, sd_x, y, has_int::Bool)
     return Diagonal(has_int ? fill(y, n) : y ./ sd_x)
 end
 
-# Back-transform one ranef term's layers (V10). Returns a NamedTuple of layers to merge
-# into the output DimStack, keyed the same as `_ranef_layers`. Point estimates (`M`) and
-# their spread (`sd`/`corr`) go through the SAME linear map `A`, so a group's reported SD
-# always describes the same quantity (at raw X=0, V21) as its reported point estimate.
+# Back-transform one ranef term's layers. Returns a NamedTuple of layers to merge into
+# the output DimStack, keyed the same as `_ranef_layers`. Point estimates (`M`) and their
+# spread (`sd`/`corr`) go through the SAME linear map `A`, so a group's reported SD
+# always describes the same quantity (at raw X=0) as its reported point estimate.
 function _unstandardise_ranef(std_layers::DimStack, tf::Transform, i::Int, ranef::RandomEffect, family::Type{<:Distribution})
     group = ranef.variable
     y = family_spec(family).scales_y ? tf.y.scale[1] : 1.0  # y's scale if standardised
@@ -150,7 +150,7 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, i::Int, ranef
     A = _ranef_transform_matrix(names, mean_x, sd_x, y, has_int)
     # One covariance transform per draw: Σ_orig = A·(D·R·D)·A'. SDs are its diagonal, so
     # they carry the same cross terms as the corr matrix — no diagonal-only shortcut here,
-    # which would drop ρ and misreport the Intercept SD for correlated terms (T33).
+    # which would drop ρ and misreport the Intercept SD for correlated terms.
     R_std = _is_correlated(ranef) ? Array(std_layers[Symbol(group, "_corr")]) : nothing
     M_orig = similar(M)
     sd_orig = similar(σz)
@@ -179,8 +179,8 @@ end
 """
     unstandardise(std_params::DimStack, tf::Transform, md::ModelData, family) -> DimStack
 
-Back-transform `reshape_params`'s standardised-scale layers to the original data scale
-(V10). Pure rescale, no structural reshuffling — see `reshape_params`.
+Back-transform `reshape_params`'s standardised-scale layers to the original data scale.
+Pure rescale, no structural reshuffling — see `reshape_params`.
 """
 function unstandardise(std_params::DimStack, tf::Transform, md::ModelData, family::Type{<:Distribution})
     layers = (; fixef=_unstandardise_fixef(std_params.fixef, tf, md, family))

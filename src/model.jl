@@ -22,12 +22,10 @@ function _random_effects(modeldata::ModelData)
 
     # Loop over ranef
     for (i, ranef) in enumerate(model_ranef)
-        # Positional index, not the group's variable name (e.g. Subject) — keeps
-        # generated symbols (and thus the compiled model) identical across ranef terms
-        # that share structural shape but differ only in grouping-variable name, so the
-        # model cache (model_cache.jl) doesn't have to treat them as different models.
-        # Real group name/levels are reattached post-hoc from TR.modeldata.Z[i] when
-        # splitting the flat sampled-VarName array into named layers (fit!/reshape.jl).
+        # Positional index, not the group's variable name — keeps generated symbols (and
+        # the compiled model) identical across ranef terms that differ only by grouping
+        # name, so model_cache.jl doesn't treat them as different models. Real group
+        # name/levels reattached post-hoc in reshape.jl.
 
         #Name parameters
         variance_ranef = Symbol("σ_z_",i)
@@ -38,7 +36,7 @@ function _random_effects(modeldata::ModelData)
         # No free mean parameter here: the population-level α/β already model the
         # mean effect. A free ranef mean would be additively confounded with β
         # (only their sum is identified), producing a slow/degenerate NUTS ridge
-        # and biased marginals (T9). Ranef components are mean-zero by construction.
+        # and biased marginals. Ranef components are mean-zero by construction.
         #Build varying slopes prior
         if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2) + 1
@@ -109,7 +107,7 @@ function _linear_model(modeldata::ModelData)
             if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
                 push!(terms, :($ranef_matrix[group_idx[:,$i], 1]))
                 n_slope = size(ranef.predictors.X, 2)
-                # The view is proven performance improvement, worth the extra lines
+                # @view avoids an alloc in the hot path — worth the extra branch.
                 if n_slope == 1
                     push!(terms, :(vec($predictors) .* $ranef_matrix[group_idx[:,$i], 2]))
                 else
@@ -220,7 +218,7 @@ function build_model_body(family::Type{<:Distribution}, modeldata::ModelData)
     push!(labels, weighted ? "Likelihood (weighted)" : "Likelihood")
 
     # No custom return: extraction reads sampled VarNames straight off the chain
-    # (`DimArray(TR.samples)`, R10) in fit!/reshape.jl — see note above _pointwise_loglik.
+    # (`DimArray(TR.samples)`) in fit!/reshape.jl.
 
     return body, labels
 end

@@ -110,6 +110,7 @@ Types:
 - V24. Post-`fit!`, `size(TR.samples, 1) == cld(samples, nchains)` exactly, regardless of `warmup`. Inexact division rounds up (realised total ≥ requested `samples`).
 - V25. `fit!` default `adtype` picked from `has_random_effects(TR.modeldata)`: ranef present → `AutoReverseDiff(compile=true)`, else → `AutoForwardDiff()`. Basis: T24 sweep showed ranef presence (not param count) determines which backend wins — see `bench/BENCHLOG.md`. User-supplied `sampler=NUTS(;adtype=...)` always overrides.
 - V26. KNOWN, not a bug: LKJ(η=1) corr prior (model.jl:47) is flat on std-scale ranef correlation, not raw-scale (C2 standardises outside model) — biases ranef SD/corr point estimates vs raw-scale tools (lme4/brms). Documented in readme.md Notes. See T34.
+- V27. Comments: why not what, short. No spec-tag refs (T/V/C/G ids) in code — code comments stay self-contained, spec is separate doc.
 
 ## §B BUGS
 

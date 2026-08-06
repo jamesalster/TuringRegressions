@@ -109,43 +109,70 @@ function _unstandardise_fixef(std::DimArray, tf::Transform, md::ModelData, famil
     return DimArray(vcat(parts...), (Dim{:fixef}(names), Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain)))
 end
 
+# Linear map from std-scale ranef-effect vector to original-scale (V10/V21). Row 1
+# (Intercept, only when both intercept and slopes present) also recenters from
+# std-scale (mean-X) back to raw X=0 — `-mean_x_j*(y/sd_x_j)` per slope column —
+# since lme4's gold standard fits raw X directly and carries no such shift. Slope
+# rows are plain elementwise `y/sd_x` scaling, no cross terms.
+function _ranef_transform_matrix(names, mean_x, sd_x, y, has_int::Bool)
+    n = length(names)
+    if has_int && n > 1
+        A = zeros(n, n)
+        A[1, 1] = y
+        for j in 2:n
+            A[1, j] = -mean_x[j-1] * y / sd_x[j-1]
+            A[j, j] = y / sd_x[j-1]
+        end
+        return A
+    end
+    return Diagonal(has_int ? fill(y, n) : y ./ sd_x)
+end
+
 # Back-transform one ranef term's layers (V10). Returns a NamedTuple of layers to merge
-# into the output DimStack, keyed the same as `_ranef_layers`.
+# into the output DimStack, keyed the same as `_ranef_layers`. Point estimates (`M`) and
+# their spread (`sd`/`corr`) go through the SAME linear map `A`, so a group's reported SD
+# always describes the same quantity (at raw X=0, V21) as its reported point estimate.
 function _unstandardise_ranef(std_layers::DimStack, tf::Transform, i::Int, ranef::RandomEffect, family::Type{<:Distribution})
     group = ranef.variable
     y = family_spec(family).scales_y ? tf.y.scale[1] : 1.0  # y's scale if standardised
     mean_x, sd_x = tf.ranef[i].mean, tf.ranef[i].scale       # per slope effect, X order
     has_int = ranef.predictors.has_intercept
+    has_slopes = !isempty(mean_x)
 
     M = Array(std_layers[Symbol(group)])          # (effect,group,draw,chain)
     σz = Array(std_layers[Symbol(group, "_sd")])  # (effect,draw,chain)
     names = collect(dims(std_layers[Symbol(group)], :effect))
     levels = collect(dims(std_layers[Symbol(group)], :group))
+    n = length(names)
     ndraw, nchain = size(M, 3), size(M, 4)
     draw_chain = (Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain))
 
-    # Per-effect linear scale — intercept ← y, slopes ← y / sd_x — applied to both
-    # the coefficients and their sds.
-    factor = has_int ? vcat(y, y ./ sd_x) : y ./ sd_x
-    M_orig = _scale_effects(M, factor)
-    sd_orig = _scale_effects(σz, factor)
-
-    # Dropping X means shifts each group's line. An intercept effect absorbs the
-    # correction; without one it becomes a standalone `offset` layer (used by predict.jl).
-    has_slopes = !isempty(mean_x)
-    slope_rows = has_int ? (2:length(names)) : (1:length(names))
-    centering = has_slopes ? _center(mean_x, M_orig[slope_rows, :, :, :]) : nothing  # (group,draw,chain)
-    has_int && has_slopes && (M_orig[1, :, :, :] .-= centering)
+    A = _ranef_transform_matrix(names, mean_x, sd_x, y, has_int)
+    # One covariance transform per draw: Σ_orig = A·(D·R·D)·A'. SDs are its diagonal, so
+    # they carry the same cross terms as the corr matrix — no diagonal-only shortcut here,
+    # which would drop ρ and misreport the Intercept SD for correlated terms (T33).
+    R_std = _is_correlated(ranef) ? Array(std_layers[Symbol(group, "_corr")]) : nothing
+    M_orig = similar(M)
+    sd_orig = similar(σz)
+    R_orig = isnothing(R_std) ? nothing : similar(R_std)
+    for c in 1:nchain, d in 1:ndraw
+        D = Diagonal(σz[:, d, c])
+        Σ_orig = isnothing(R_std) ? A * D * D * A' : A * D * R_std[:, :, d, c] * D * A'
+        sd = sqrt.(diag(Σ_orig))
+        M_orig[:, :, d, c] = A * M[:, :, d, c]
+        sd_orig[:, d, c] = sd
+        isnothing(R_orig) || (R_orig[:, :, d, c] = Σ_orig ./ (sd * sd'))
+    end
 
     base = (;
         Symbol(group) => DimArray(M_orig, (Dim{:effect}(names), Dim{:group}(levels), draw_chain...)),
         Symbol(group, "_sd") => DimArray(sd_orig, (Dim{:effect}(names), draw_chain...)),
     )
-    # correlation is scale-invariant — pass the standardised-scale layer through.
-    _is_correlated(ranef) &&
-        return merge(base, (; Symbol(group, "_corr") => std_layers[Symbol(group, "_corr")]))
+
+    isnothing(R_orig) ||
+        return merge(base, (; Symbol(group, "_corr") => DimArray(R_orig, (Dim{:effect}(names), Dim{:effect2}(names), draw_chain...))))
     has_slopes && !has_int &&
-        return merge(base, (; Symbol(group, "_offset") => DimArray(-centering, (Dim{:group}(levels), draw_chain...))))
+        return merge(base, (; Symbol(group, "_offset") => DimArray(-_center(mean_x, M_orig), (Dim{:group}(levels), draw_chain...))))
     return base
 end
 

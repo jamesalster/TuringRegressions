@@ -44,7 +44,7 @@ function _random_effects(modeldata::ModelData)
             n_predictors = size(ranef.predictors.X, 2) + 1
             push!(body.args, quote
                 $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
-                $L_ranef ~ LKJCholesky($n_predictors, 2.0)
+                $L_ranef ~ LKJCholesky($n_predictors, 1.0)
                 $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
                 # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
                 $ranef_matrix = (diagm($variance_ranef) * $L_ranef.L * $ranef_matrix_raw)'

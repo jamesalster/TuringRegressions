@@ -306,6 +306,17 @@ function fit!(
     quiet=true,
     kwargs...,
 ) where {T}
+    # turing_glm eval's a freshly gensym'd model function; calling it in the same
+    # method body (e.g. `f() = fit!(turing_glm(...))`) would hit a world-age error
+    # without this — invokelatest routes around it, once per fit! call, not per
+    # NUTS step.
+    return Base.invokelatest(_fit!, TR; sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...)
+end
+
+function _fit!(
+    TR::TuringRegression{T};
+    sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...,
+) where {T}
     model_with_data = _build_model_with_data(TR)
 
     # `samples` and `warmup` are totals across chains; split with ceil division so the

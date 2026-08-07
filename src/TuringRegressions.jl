@@ -58,10 +58,8 @@ include("plots.jl")
 include("statsapi.jl")
 
 # Warms the ~25s generic Turing/DynamicPPL/AbstractMCMC/StatsModels compile so the
-# first user `turing_glm`+`fit!` doesn't pay it. `turing_glm` eval's a fresh model
-# function at runtime; calling it and `fit!` in the same function body hits a
-# world-age gap (see bench/sleepstudy_bench.jl), so `fit!` goes through
-# `Base.invokelatest`.
+# first user `turing_glm`+`fit!` doesn't pay it. `fit!` routes through
+# `Base.invokelatest` internally (src/turingregression.jl), so no world-age gap here.
 #
 # Ranef `fit!`/`sample()` NOT precompiled: its default adtype (AutoReverseDiff)
 # segfaults on package-image reload — a Turing/DynamicPPL serialization
@@ -74,7 +72,7 @@ include("statsapi.jl")
     Logging.with_logger(NullLogger()) do
         @suppress begin
             m1 = turing_glm(@formula(y ~ 1 + x), df, Normal)
-            Base.invokelatest(fit!, m1; samples=1, warmup=1, nchains=2, quiet=true)
+            fit!(m1; samples=1, warmup=1, nchains=2, quiet=true)
         end
     end
 end

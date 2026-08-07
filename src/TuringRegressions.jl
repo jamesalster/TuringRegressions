@@ -32,6 +32,7 @@ using DynamicPPL: getsym, InitFromPrior
 
 using MacroTools: prettify
 using Suppressor: @suppress
+using Logging: Logging, NullLogger
 import StatsBase: StatsBase, mean, std, cov, CoefTable, ZScoreTransform, fit, transform
 using DataFrames: DataFrame
 using Tables: columntable
@@ -71,9 +72,11 @@ include("statsapi.jl")
     df = DataFrame(y=[1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
         x=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
         g=["a", "a", "a", "b", "b", "b"])
-    @suppress begin
-        m1 = turing_glm(@formula(y ~ 1 + x), df, Normal)
-        Base.invokelatest(fit!, m1; samples=1, warmup=1, nchains=1, quiet=true)
+    Logging.with_logger(NullLogger()) do
+        @suppress begin
+            m1 = turing_glm(@formula(y ~ 1 + x), df, Normal)
+            Base.invokelatest(fit!, m1; samples=1, warmup=1, nchains=2, quiet=true)
+        end
     end
 end
 

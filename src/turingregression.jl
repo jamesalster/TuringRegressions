@@ -270,7 +270,7 @@ function fit!(
     # Multi-chain `sample()` wants one init strategy per chain, not a single shared one.
     initial_params_per_chain = fill(initial_params, nchains)
     if quiet
-        TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, kwargs...)
+        TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, progress=false, kwargs...)
     else
         TR.samples = sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, progress=true, kwargs...)
     end

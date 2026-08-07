@@ -24,7 +24,7 @@ function _error_if_random_effects(TR::TuringRegression, fn::Symbol)
     has_random_effects(TR) && throw(ArgumentError(
         "$fn(TR) is not meaningful for a model with random effects — it can only " *
         "describe the fixed-effects design, not the grouping/Z structure. Use " *
-        "`predictors(TR, :fixef)` for the fixed-effects matrix alone.",
+        "`get_fixef_predictors(TR)` for the fixed-effects matrix alone.",
     ))
 end
 

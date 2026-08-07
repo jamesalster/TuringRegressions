@@ -39,7 +39,6 @@ using Tables: columntable
 using LinearAlgebra: I, dot, Symmetric, diagm, diag, Diagonal
 using CategoricalArrays: categorical
 using CategoricalDistributions: UnivariateFinite
-using MixedModels: _ranef_refs
 using PrecompileTools: @compile_workload
 
 include("prior.jl")
@@ -86,7 +85,7 @@ export TuringRegression,
     model_summary,
     draws,
     outcome,
-    predictors,
+    get_fixef_predictors,
     outcome_as_distribution,
     posterior_predict,
     psis_loo,

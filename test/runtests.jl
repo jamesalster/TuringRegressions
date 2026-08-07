@@ -77,6 +77,30 @@ end
 try # keep going through sibling testsets on failure, still print benchmark table
 @testset "TuringRegressions" begin
 
+@testset "V21: standardise/unstandardise round trip" begin
+    # No MCMC involved — pure ModelData/Transform round trip, always runs.
+    families = [Normal, TDist, NegativeBinomial, Bernoulli, Poisson]
+    ranef_formulas = [
+        @formula(Reaction ~ 1 + Days + (1 + Days | Subject)),  # correlated intercept + slope
+        @formula(Reaction ~ 1 + Days + (1 | Subject)),          # intercept-only
+        @formula(Reaction ~ 1 + Days + (0 + Days | Subject)),   # slope-only, no intercept
+    ]
+    for formula in ranef_formulas
+        md = TuringRegressions.extract_model_data(formula, sleepstudy)
+        for family in families
+            tf = TuringRegressions.compute_transform(md, family)
+            md_std = TuringRegressions.apply_transform(tf, md)
+            md_back = TuringRegressions.unstandardise_data(md_std, tf)
+
+            @test md_back.predictors.X ≈ md.predictors.X
+            @test md_back.y ≈ md.y
+            for (re_back, re) in zip(md_back.Z, md.Z)
+                @test re_back.predictors.X ≈ re.predictors.X
+            end
+        end
+    end
+end
+
 if !DEV_SUBSET
 @testset "Predict" begin
     Random.seed!(123)

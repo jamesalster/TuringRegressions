@@ -244,7 +244,7 @@ function construct_model(family::Type{<:Distribution}, modeldata::ModelData)
         end
     end
 
-    return eval(model_code), prettify(model_code)
+    return eval(model_code)
 end
 
 """

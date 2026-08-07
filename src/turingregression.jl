@@ -18,7 +18,6 @@ mutable struct TuringRegression{T<:Distribution} <: RegressionModel
     link::Function
     modeldata::ModelData
     tf::Transform
-    modelcode::Expr
     samples::Union{Nothing,VNChain}
     parameters::Union{Nothing,DimStack}
 end
@@ -84,7 +83,7 @@ function turing_glm(formula::FormulaTerm,
     end
     _, tf = standardise(modeldata, family)
 
-    model_obj, model_code = construct_model(family, modeldata)
+    model_obj = construct_model(family, modeldata)
 
     return TuringRegression{family}(
         modeldata.f,
@@ -93,7 +92,6 @@ function turing_glm(formula::FormulaTerm,
         get_link(family),
         modeldata,
         tf,
-        model_code,
         nothing,
         nothing
     )

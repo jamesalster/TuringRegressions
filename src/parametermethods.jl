@@ -75,17 +75,12 @@ function outcome(TR::TuringRegression)
 end
 
 """
-    predictors(TR::TuringRegression, type::Symbol)
+    get_fixef_predictors(TR::TuringRegression)
 
-Get the predictor matrix variable as DimArray. `type` can be `:fixef` or `:ranef`
+Get the fixed-effects predictor matrix as DimArray.
 """
-function predictors(TR::TuringRegression, type::Symbol)
-    if type === :fixef
-        return DimArray(TR.modeldata.predictors.X, (Dim{:row}, Dim{:var}([TR.modeldata.predictors.X_names...])))
-    elseif type === :ranef
-        error("Not implemented")
-    end
-    #TODO add random_effecs version of that
+function get_fixef_predictors(TR::TuringRegression)
+    return DimArray(TR.modeldata.predictors.X, (Dim{:row}, Dim{:var}([TR.modeldata.predictors.X_names...])))
 end
 
 

@@ -83,6 +83,8 @@ function _auxiliary_parameter(family::Type{<:Distribution})
         end
     elseif family ∈ [Bernoulli, Poisson]
         return :() #empty quote, no code
+    else
+        error("Family $family has no auxiliary-parameter code generator.")
     end
 end
 
@@ -144,6 +146,8 @@ function _obs_logpdf(family::Type{<:Distribution})
         :(logpdf(LogPoisson(μ[n]), y[n])) #Not scaled
     elseif family == NegativeBinomial
         :(logpdf(NegativeBinomial2(exp(μ[n]), ϕ_inv), y[n])) #Not scaled
+    else
+        error("Family $family has no per-observation logpdf code generator.")
     end
 end
 

@@ -149,15 +149,7 @@ function epred(
     kwargs...,
 ) where {T}
     μ = linpred(TR, X, z; dropdims=false, kwargs...)
-    invlink = let
-        if TR.link == identity
-            identity
-        elseif TR.link == logit
-            logistic
-        elseif TR.link == log
-            exp
-        end
-    end
+    invlink = get_invlink(T)
     epreds = invlink.(μ)
     return dropdims ? _drop_single_dims(epreds) : epreds
 end

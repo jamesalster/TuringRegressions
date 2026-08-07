@@ -6,12 +6,16 @@ function _process_draws(DA::Union{DimArray, DimStack}; drop_draws::Int=0, n_draw
     arr = DA[iter=(drop_draws + 1):size(DA, :iter)]
     # Select draws
     if isfinite(n_draws)
-        @assert n_draws <= size(arr, :iter) "$n_draws draws is too many from $(size(arr, :iter)) available. Note that n_draws is applied per chain."
+        n_draws > size(arr, :iter) && throw(ArgumentError(
+            "$n_draws draws is too many from $(size(arr, :iter)) available. Note that n_draws is applied per chain."
+        ))
         arr = arr[iter=1:Int(n_draws)]
     end
     # Collapse
     arr = collapse ? mergedims(arr, (:iter, :chain) => :iter) : arr
-    @assert size(arr, :iter) > 0 "No samples returned, check kwargs and perhaps try adjusting `drop_draws`?"
+    size(arr, :iter) <= 0 && throw(ArgumentError(
+        "No samples returned, check kwargs and perhaps try adjusting `drop_draws`?"
+    ))
     return arr
 end
 

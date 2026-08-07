@@ -218,7 +218,7 @@ if !DEV_SUBSET
     @test draws(mod) isa DimStack
     @test draws(mod, :fixef) isa DimArray
     @test_throws ArgumentError draws(mod, :not_a_real_type)
-    @test_throws AssertionError draws(mod, :fixef; drop_draws=0, n_draws=10_000)
+    @test_throws ArgumentError draws(mod, :fixef; drop_draws=0, n_draws=10_000)
 
     collapsed = draws(mod, :fixef; collapse=true)
     uncollapsed = draws(mod, :fixef; collapse=false)

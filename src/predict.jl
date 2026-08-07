@@ -139,7 +139,7 @@ function epred(
     dropdims=true,
     kwargs...,
 ) where {T}
-    μ = linpred(TR, X, z; kwargs...)
+    μ = linpred(TR, X, z; dropdims=false, kwargs...)
     invlink = let
         if TR.link == identity
             identity
@@ -168,7 +168,7 @@ function posterior_pred(
     dropdims=true,
     kwargs...,
 ) where {T}
-    epreds = epred(TR, X, z; kwargs...)
+    epreds = epred(TR, X, z; dropdims=false, kwargs...)
     fixef_draws = draws(TR, :fixef; kwargs...)
     # σ/ν/ϕ vary per draw (iter[,chain]), not per row. Indexing with a 1-element Vector (not a
     # scalar) keeps the size-1 fixef dim in place, so Array(...) already comes out shaped

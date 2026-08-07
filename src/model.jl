@@ -22,9 +22,8 @@ function _random_effects(modeldata::ModelData)
 
     # Loop over ranef
     for (i, ranef) in enumerate(model_ranef)
-        # Positional index, not the group's variable name — keeps generated symbols (and
-        # the compiled model) identical across ranef terms that differ only by grouping
-        # name, so model_cache.jl doesn't treat them as different models. Real group
+        # Positional index, not the group's variable name — keeps generated symbols
+        # identical across ranef terms that differ only by grouping name. Real group
         # name/levels reattached post-hoc in reshape.jl.
 
         #Name parameters

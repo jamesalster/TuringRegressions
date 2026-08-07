@@ -28,7 +28,7 @@ using StatisticalMeasures
 using PosteriorStats: loo, compare
 using MCMCDiagnosticTools
 using FlexiChains: FlexiChains, VNChain
-using DynamicPPL: getsym
+using DynamicPPL: getsym, InitFromPrior
 
 using MacroTools: prettify
 using Suppressor: @suppress
@@ -48,7 +48,6 @@ include("unstandardise.jl")
 include("reshape.jl")
 include("turingregression.jl")
 include("model.jl")
-include("model_cache.jl")
 include("utils.jl")
 include("parametermethods.jl")
 include("predict.jl")

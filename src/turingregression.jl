@@ -70,7 +70,7 @@ function turing_glm(formula::FormulaTerm,
     modeldata = extract_model_data(formula, data, weights)
     _, tf = standardise(modeldata, family)
 
-    model_obj, model_code = cached_construct_model(family, modeldata)
+    model_obj, model_code = construct_model(family, modeldata)
 
     return TuringRegression{family}(
         modeldata.f,
@@ -226,6 +226,7 @@ already-kept draws at extraction time.
 - `nchains`: Number of chains (default: 4)
 - `warmup`: Total adaptation draws across all chains (IN ADDITION to `samples`), split over `nchains`, rounded up, discarded (default: equal to `samples`)
 - `quiet`: Suppress all sampler output — hides both the progress bar and any warnings (default: true). Set `false` for a live progress bar (a single aggregate bar across threaded chains); override with `progress=false` via kwargs.
+- `initial_params`: NUTS init strategy (default: `InitFromPrior()` — samples init from the model's own prior, robust across families/param counts). Default `InitFromUniform` (blind uniform in unconstrained space) can fail `"find valid initial parameters in 1000 tries"` on wide/flat posteriors; override via kwargs if needed.
 
 # Example
 ```julia
@@ -252,6 +253,7 @@ function fit!(
     sampler=NUTS(; adtype=has_random_effects(TR.modeldata) ? AutoReverseDiff(; compile=true) : AutoForwardDiff()),
     parallel=MCMCThreads(),
     samples=2000,
+    initial_params=InitFromPrior(),
     nchains=4,
     warmup=samples,
     quiet=true,
@@ -265,10 +267,12 @@ function fit!(
     warmup_per_chain = cld(warmup, nchains)
     # AbstractMCMC's `N` already means kept draws; `discard_initial` adds
     # `warmup_per_chain` steps on top (total steps sampled = per_chain + warmup_per_chain).
+    # Multi-chain `sample()` wants one init strategy per chain, not a single shared one.
+    initial_params_per_chain = fill(initial_params, nchains)
     if quiet
-        TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, kwargs...)
+        TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, kwargs...)
     else
-        TR.samples = sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, progress=true, kwargs...)
+        TR.samples = sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, progress=true, kwargs...)
     end
 
     # Raw standardised-scale sampled params straight off the chain, stacked into

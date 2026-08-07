@@ -31,7 +31,9 @@ Compute standardisation constants from raw `ModelData`. Pure — does not touch 
 """
 function compute_transform(md::ModelData, family::Type{<:Distribution})
     fixef = fit(ZScoreTransform, md.predictors.X, dims=1)
-    ranef = [fit(ZScoreTransform, re.predictors.X, dims=1) for re in md.Z]
+    # No-intercept ranef terms skip centring: an intercept would absorb the mean_x*slope
+    # cross term on back-transform, but there's nowhere to put it without one.
+    ranef = [fit(ZScoreTransform, re.predictors.X, dims=1; center=re.predictors.has_intercept) for re in md.Z]
     scale_y = family_spec(family).scales_y
     y = scale_y ? fit(ZScoreTransform, md.y) : fit(ZScoreTransform, md.y; center=false, scale=false)
     y_mean, y_scale = scale_y ? (y.mean[1], y.scale[1]) : (0.0, 1.0)

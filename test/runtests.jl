@@ -533,10 +533,21 @@ end
         d = draws(mod)
         @test :Subject ∈ propertynames(d)
         @test :Subject_corr ∉ propertynames(d)
+        @test :Subject_offset ∉ propertynames(d) # offset layer deleted, not just unapplied
         @test collect(dims(draws(mod, :Subject), :effect)) == [:Days]
 
         # Guards B4: slope-only ranef must not silently drop the real predictor
         @test_nowarn posterior_predict(mod; type=:epred)
+
+        # epred vs lme4 `lmer(Reaction ~ 1 + Days + (0 + Days | Subject), sleepstudy)`
+        # fitted values (REML), spot-checked on subject 1 (rows 1:10, full Days=0:9 range).
+        # A centred ranef predictor would fit an implicit per-group intercept instead of a
+        # through-origin slope, diverging from lme4 everywhere Days != 0.
+        lme4_fitted_subject1 = [
+            251.405, 271.492, 291.578, 311.665, 331.752, 351.839, 371.925, 392.012, 412.099, 432.185,
+        ]
+        epred_mean = Array(posterior_predict(mean, mod; type=:epred))
+        @test isapprox(epred_mean[1:10], lme4_fitted_subject1, atol=15, norm=x -> maximum(abs, x))
     end
     end # !DEV_SUBSET
 end

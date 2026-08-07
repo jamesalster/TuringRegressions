@@ -41,13 +41,6 @@ function _effect_names(re::RandomEffect)
 end
 _is_correlated(re::RandomEffect) = re.predictors.has_intercept & has_fixed_effects(re.predictors)
 
-# Shared rescaling atoms. Coefficients live in arrays whose leading axis is `:effect`,
-# so both work for fixef (effect,draw,chain) and ranef (effect,group,draw,chain).
-#   _scale_effects — multiply each effect row by its own factor
-#   _center        — contract the effect axis against per-effect X means (Σ mean·coef)
-_scale_effects(coefs, v) = coefs .* reshape(v, length(v), ntuple(_ -> 1, ndims(coefs) - 1)...)
-_center(mean_x, coefs) = dropdims(sum(_scale_effects(coefs, mean_x); dims=1); dims=1)
-
 function _fixef_layer(raw::DimArray, md::ModelData, family::Type{<:Distribution})
     names = Symbol[]
     parts = Array{Float64,3}[]

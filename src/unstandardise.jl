@@ -63,7 +63,6 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::Random
     group = ranef.variable
     y_scale = family_spec(family).scales_y ? tf.y_scale : 1.0
     has_int = ranef.predictors.has_intercept
-    has_slopes = !isempty(xt.mean)
 
     effects_std = Array(std_layers[Symbol(group)])         # (effect,group,draw,chain)
     sds_std = Array(std_layers[Symbol(group, "_sd")])      # (effect,draw,chain)
@@ -97,8 +96,6 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::Random
 
     isnothing(corr_raw) ||
         return merge(base, (; Symbol(group, "_corr") => DimArray(corr_raw, (Dim{:effect}(names), Dim{:effect2}(names), draw_chain...))))
-    has_slopes && !has_int &&
-        return merge(base, (; Symbol(group, "_offset") => DimArray(-_center(xt.mean, effects_raw), (Dim{:group}(levels), draw_chain...))))
     return base
 end
 

@@ -1,7 +1,7 @@
 
 # TuringRegressions.jl
 
-An alternative and more fully featured version of [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/) for Bayesian regression fits. Handles both fixed and random effects, including correlated intercepts and slopes.
+An alternative and more fully featured version of [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/) for Bayesian regression fits, modelled on `brms` in `R`. Handles both fixed and random effects, including correlated intercepts and slopes.
 
 It is deliberately fully featured and heavy, providing a convenient front-end to a large number of packages.
 
@@ -9,16 +9,17 @@ Design Features:
 
 * Handles Normal, TDist, Binomial, Poisson, NegativeBinomial families
 * Fixed and Random effects supported, including varying slopes
-* Models run on standardised scale for performance to ensure correct outputs vs GLM/lme4/brms (three fits are exactly benchmarked in tests)
+* Models run on standardised scale for performance to ensure correct outputs vs GLM/lme4 (three fits are exactly benchmarked in tests)
 * Priors are somewhat customisable, and specified on standardised scale
 * Model code dynamically constructed, can be viewed and exported
+* Sampling performance in NUTS optimised as far as possible; ReverseDiff used for random effect models to improve performance
 * Outputs use `DimensionalData` for easy indexing
 * `PrettyTable` model summaries, with prediction metrics
-* Prediction on same or new data supported
+* Prediction on same or new data
 * `StatsAPI.RegressionModel` interface implemented as far as possible
-* Model comparison with LOO
-* Some `Makie` Plot recipes
-* Performance in NUTS optimised as far as posisble; ReverseDiff used for random effect models to improve performance
+* Model comparison with Psis and Loo
+* `Makie` Plot recipes
+* Precompiles a single fixed effects fit, expensive but saving ~10s+ on time-to-first-fit across all fit types.
 
 ## Installation
 
@@ -62,7 +63,7 @@ fixed_effects[param=At("Cyl")]
 draws(mod, :fixef; collapse=false)[chain=2:3, param=Where(x -> occursin(r"yl", x))]
 
 # Extract parameters with options controlling output
-draws(mod, :fixef; drop_warmup=100, n_draws=500, collapse=false)
+draws(mod, :fixef; drop_draws=100, n_draws=500, collapse=false)
 draws(mod, :internals) # Sampling information
 
 # Random effects — correlated intercept + slope per group
@@ -108,7 +109,7 @@ fit!(robust_mod, N=4000, nchains=3)
 using GLMakie
 
 # Coefficients
-coefs = draws(median, mod, :fixef)
+coefs = draws(mod, :fixef)
 violin(coefs; scale=:width, show_median=:true, side=:left)
 rainclouds(coefs)
 boxplot(coefs)
@@ -141,8 +142,8 @@ pp_check_dens_overlay(mod)
 * `fit!(model; sampler=NUTS(), parallel=MCMCThreads(), N=2000, nchains=4, kwargs...)` - Run MCMC sampling, mutates model
 
 ### Parameter Extraction
-* `draws(model; drop_warmup, n_draws, collapse)` - Whole parameter `DimStack` (all layers)
-* `draws(model, type; drop_warmup, n_draws, collapse)` - Single layer `DimArray`. `type` one of `propertynames(model.parameters)`, e.g. `:fixef`, `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`
+* `draws(model; drop_draws, n_draws, collapse)` - Whole parameter `DimStack` (all layers)
+* `draws(model, type; drop_draws, n_draws, collapse)` - Single layer `DimArray`. `type` one of `propertynames(model.parameters)`, e.g. `:fixef`, `:{group}`, `:{group}_sd`, `:{group}_corr`, `:{group}_offset`, `:internals`
 * `draws(f, model, type; dropdims, kwargs...)` - Apply reducer `f` (e.g. `median`) over draw/chain dims
 * `outcome(model)` - Response variable
 * `predictors(model, type)` - Predictor table
@@ -177,19 +178,21 @@ pp_check_dens_overlay(mod)
 * `lineribbon!()` - Makie recipe for banded intervals, used in `conditional_dependency()`
 * `conditional_dependency(model, var)` - Show dependency of outcome on one variable
 * `pp_check_hist(model)` as well as `pp_check_dens()` and `pp_check_dens_overlay()` - Posterior predictive checks
-* See also the examples below for more quick plots
+* See also the examples above for more quick plots
 
 ### Common Arguments
 
 Parameter extraction functions accept:
 
-* `drop_warmup=200` - Warmup samples to drop
+* `drop_draws=200` - Warmup samples to drop
 * `n_draws=-1` - Number of draws (-1 for all)
 * `collapse=true` - Collapse chains into single dimension
 
 ## Thanks
 
 This pacakge was heavily inspired by and uses small snippets of code from TuringGLM. 
+
+This is intended as a front-end package to a large number of others, and depends notably on the Turing.jl and DimensionalData.jl ecosystems.
 
 The original was hand-written but the random-effect implementation, tidying up and docs were co-written with Claude.
 

@@ -109,6 +109,35 @@ if !DEV_SUBSET
         @test isapprox(Array(linp), log.(Array(ep)))
     end
 
+    @testset "posterior predictive noise is independent per row" begin
+        Random.seed!(123)
+        post = Array(posterior_predict(mod; type=:posterior, collapse=false))
+        ep = Array(posterior_predict(mod; type=:epred, collapse=false))
+        σ = Array(draws(mod, :fixef; collapse=false)[fixef=At([:σ])])
+        # Noise must vary across rows within a single draw, not just across draws: residual
+        # (posterior_pred - epred) variance ACROSS ROWS in each draw should track σ² for that draw.
+        resid_var = mean(var(post .- ep; dims=1))
+        @test isapprox(resid_var, mean(σ .^ 2); rtol=0.3)
+    end
+
+    @testset "collapse=false posterior predict runs for all 5 families" begin
+        Random.seed!(123)
+        mod_t = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, TDist)
+        quickfit!(mod_t)
+        mod_p = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson)
+        quickfit!(mod_p)
+        mod_negbin = turing_glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial)
+        quickfit!(mod_negbin)
+        mtcars_binom = copy(mtcars)
+        mtcars_binom.binom = mtcars_binom.MPG .> 20
+        mod_bin = turing_glm(@formula(binom ~ Cyl + Disp), mtcars_binom, Bernoulli)
+        quickfit!(mod_bin)
+
+        for m in (mod, mod_t, mod_p, mod_negbin, mod_bin)
+            @test_nowarn posterior_predict(m; type=:posterior, collapse=false)
+        end
+    end
+
     @testset "new_data uses raw scale, no re-standardisation" begin
         new_data = mtcars[3:8, :]
         glm_mod = GLM.lm(@formula(MPG ~ Cyl + Disp), mtcars)

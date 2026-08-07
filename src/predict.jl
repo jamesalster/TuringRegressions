@@ -169,23 +169,27 @@ function posterior_pred(
     kwargs...,
 ) where {T}
     epreds = epred(TR, X, z; kwargs...)
-    ndraws = size(epreds, 2)
     fixef_draws = draws(TR, :fixef; kwargs...)
+    # σ/ν/ϕ vary per draw (iter[,chain]), not per row. Indexing with a 1-element Vector (not a
+    # scalar) keeps the size-1 fixef dim in place, so Array(...) already comes out shaped
+    # (1, iter[, chain]) and broadcasts across rows instead of being shared by every row
+    # within a draw.
     if T == Normal
-        σ = vec(fixef_draws[fixef=At([:σ])])
-        posterior_preds = (rand(T(), ndraws) .* σ)' .+ epreds
+        σ = Array(fixef_draws[fixef=At([:σ])])
+        posterior_preds = epreds .+ randn(size(epreds)) .* σ
     elseif T == TDist
-        σ = vec(fixef_draws[fixef=At([:σ])])
-        ν = vec(fixef_draws[fixef=At([:ν])])
-        posterior_preds = (rand.(T.(ν)) .* σ)' .+ epreds
+        σ = Array(fixef_draws[fixef=At([:σ])])
+        ν = Array(fixef_draws[fixef=At([:ν])])
+        noise = rand.(TDist.(ν .* ones(size(epreds))))
+        posterior_preds = epreds .+ noise .* σ
     elseif T == Bernoulli
         posterior_preds = rand.(Bernoulli.(epreds))
     elseif T == Poisson
         posterior_preds = rand.(Poisson.(epreds))
     elseif T == NegativeBinomial
-        ϕ = vec(fixef_draws[fixef=At([:ϕ])])
+        ϕ = Array(fixef_draws[fixef=At([:ϕ])])
         # model.jl samples ϕ as inverse-dispersion (ϕ_inv = 1/ϕ feeds NegativeBinomial2's r); invert to match
-        posterior_preds = rand.(NegativeBinomial2.(epreds, (1 ./ ϕ)'))
+        posterior_preds = rand.(NegativeBinomial2.(epreds, 1 ./ (ϕ .* ones(size(epreds)))))
     end
     return dropdims ? _drop_single_dims(posterior_preds) : posterior_preds
 end

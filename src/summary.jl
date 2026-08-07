@@ -98,13 +98,7 @@ function model_summary(
         row_labels=param_names,
         stubhead_label="Parameter",
         highlighters=make_highlighters(ncols),
-        formatters=[
-            fmt__printf("%5.2f", collect(1:(ncols - 5))),
-            fmt__printf("%5.2g", [ncols - 4]),
-            fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
-            fmt__printf("%5.3f", [ncols - 1]),
-            fmt__printf("%5.3f", [ncols]),
-        ],
+        formatters=_stat_formatters(ncols),
         default_options...,
     )
     if has_random_effects(TR)
@@ -124,13 +118,7 @@ function model_summary(
                     row_labels=levels,
                     stubhead_label="Level",
                     highlighters=make_highlighters(ncols),
-                    formatters=[
-                        fmt__printf("%5.2f", collect(1:(ncols - 5))),
-                        fmt__printf("%5.2g", [ncols - 4]),
-                        fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
-                        fmt__printf("%5.3f", [ncols - 1]),
-                        fmt__printf("%5.3f", [ncols]),
-                    ],
+                    formatters=_stat_formatters(ncols),
                     default_options...,
                 )
             end
@@ -146,13 +134,7 @@ function model_summary(
                 row_labels=effect_names,
                 stubhead_label="Effect",
                 highlighters=make_highlighters(ncols),
-                formatters=[
-                    fmt__printf("%5.2f", collect(1:(ncols - 5))),
-                    fmt__printf("%5.2g", [ncols - 4]),
-                    fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
-                    fmt__printf("%5.3f", [ncols - 1]),
-                    fmt__printf("%5.3f", [ncols]),
-                ],
+                formatters=_stat_formatters(ncols),
                 default_options...,
             )
 
@@ -253,6 +235,16 @@ function model_warnings(TR::TuringRegression)
         end
     end
     model_warnings((; std=stds, mcse=mcses, ess_bulk=ess_bulks, ess_tail=ess_tails, rhat=rhats))
+end
+
+# Column layout: [funs..., quantiles..., mcse, ess_bulk, ess_tail, rhat]
+function _stat_formatters(ncols)
+    return [
+        fmt__printf("%5.2f", collect(1:(ncols - 4))),
+        fmt__printf("%5.2g", [ncols - 3]),
+        fmt__printf("%5.0f", [ncols - 2, ncols - 1]),
+        fmt__printf("%5.3f", [ncols]),
+    ]
 end
 
 # Highlighters

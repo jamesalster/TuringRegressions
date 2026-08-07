@@ -25,6 +25,13 @@ end
 
 # Grouping info for random effects: fitted data reuses TR.modeldata.Z, a bare X matrix
 # carries no grouping info to reconstruct it from.
+function _check_predictor_cols(TR::TuringRegression, X::AbstractArray)
+    expected = size(TR.modeldata.predictors.X, 2)
+    size(X, 2) == expected || throw(ArgumentError(
+        "X has $(size(X, 2)) columns, fitted model expects $expected."
+    ))
+end
+
 function _resolve_z(TR::TuringRegression, X::AbstractArray)
     !has_random_effects(TR) && return nothing
     X === TR.modeldata.predictors.X && return TR.modeldata.Z
@@ -36,10 +43,12 @@ function _resolve_z(TR::TuringRegression, X::AbstractArray)
 end
 
 function posterior_predict(TR::TuringRegression, X::AbstractArray=TR.modeldata.predictors.X; type::Symbol=:posterior, kwargs...)
+    _check_predictor_cols(TR, X)
     return _predict_fn(type)(TR, X, _resolve_z(TR, X); kwargs...)
 end
 
 function posterior_predict(f::Function, TR::TuringRegression, X::AbstractArray=TR.modeldata.predictors.X; type::Symbol=:posterior, kwargs...)
+    _check_predictor_cols(TR, X)
     return _predict_fn(type)(f, TR, X, _resolve_z(TR, X); kwargs...)
 end
 

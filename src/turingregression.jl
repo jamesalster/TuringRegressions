@@ -58,10 +58,18 @@ function turing_glm(formula::FormulaTerm,
     data::DataFrame,
     family::Type{<:Distribution};
     priors::RegressionPrior=default_prior(family),
-    weights::Union{Nothing, Vector{Float64}}=nothing)
+    weights::Union{Nothing, AbstractVector{<:Real}}=nothing)
 
     if family ∉ [Normal, TDist, Bernoulli, Poisson, NegativeBinomial]
         error("Family: $(string(family)) not supported.")
+    end
+
+    if !isnothing(weights)
+        length(weights) == size(data, 1) || throw(ArgumentError(
+            "weights has length $(length(weights)), data has $(size(data, 1)) rows."
+        ))
+        all(≥(0), weights) || throw(ArgumentError("weights must be non-negative."))
+        weights = convert(Vector{Float64}, weights)
     end
 
     # Get data arrays. `modeldata.f` is `formula` with schema/contrasts baked in —
@@ -117,9 +125,15 @@ function turing_glm(
     if isempty(names)
         X_names = ntuple(i -> Symbol("X$i"), size(X, 2))
     else
+        length(names) == size(X, 2) || throw(ArgumentError(
+            "names has length $(length(names)), X has $(size(X, 2)) columns."
+        ))
         X_names = ntuple(i -> Symbol(names[i]), length(names))
     end
     df = DataFrame(X, collect(X_names))
+    :y ∈ propertynames(df) && throw(ArgumentError(
+        "a predictor is already named :y (clashes with the response column name)."
+    ))
     df.y = y
     formula = term(:y) ~ sum(term.(X_names))
     return turing_glm(formula, df, T; kwargs...)

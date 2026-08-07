@@ -216,7 +216,7 @@ the actual per-chain count — and thus the total — is never less than request
 `samples=101, nchains=4` keeps 26/chain = 104 total. Warmup is sampled IN ADDITION to
 `samples` (not carved out of it): each chain runs `warmup/nchains` adaptation draws that
 are discarded, then `samples/nchains` kept draws. Warmup is never returned; `warmup=0`
-disables it. This is independent from `drop_warmup` in `draws`/`summary`, which trims
+disables it. This is independent from `drop_draws` in `draws`/`summary`, which trims
 already-kept draws at extraction time.
 
 # Arguments

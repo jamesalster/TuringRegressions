@@ -36,7 +36,7 @@ function _diagnostics_table(arr, labels, funs, func_names_all, quantiles)
 end
 
 """
-    summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_warmup=nothing, kwargs...)
+    summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_draws=nothing, kwargs...)
 
 Display formatted summary table of model parameters.
 
@@ -46,7 +46,7 @@ Display formatted summary table of model parameters.
 - `funs`: Summary functions to apply (default: [median, std])
 - `quantiles`: Quantiles to compute (default: [0.025, 0.975] for 95% CI)
 - `return_table`: Whether to return the summary table as NamedTuple
-- `drop_warmup`: Number of extra warmup draws to drop, on top of what `fit!` already discarded during adaptation (default: 0 — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
+- `drop_draws`: Number of extra warmup draws to drop, on top of what `fit!` already discarded during adaptation (default: 0 — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
 - `show_metrics`: Whether to compute and display the prediction metrics table (default: false)
 - `kwargs...`: Additional arguments passed to `draws`/`default_metrics` (e.g. `n_draws`)
 """
@@ -56,7 +56,7 @@ function Base.summary(
     funs=[mean, std],
     quantiles=[0.025, 0.975],
     return_table=false,
-    drop_warmup=nothing,
+    drop_draws=nothing,
     show_metrics=false,
     kwargs...,
 )
@@ -67,9 +67,9 @@ function Base.summary(
         Symbol.(funs), [Symbol("q$(round(q*100; digits=1))") for q in quantiles]
     )
 
-    drop_warmup = something(drop_warmup, 0)
+    drop_draws = something(drop_draws, 0)
 
-    fixef_draws = draws(TR, :fixef; drop_warmup=drop_warmup, collapse=false, kwargs...)
+    fixef_draws = draws(TR, :fixef; drop_draws=drop_draws, collapse=false, kwargs...)
     param_names = collect(dims(fixef_draws, :fixef))
     chain_info = _diagnostics_table(fixef_draws, param_names, funs, func_names_all, quantiles)
 
@@ -78,7 +78,7 @@ function Base.summary(
     #metrics
     if show_metrics
         metric_tabs = map(
-            f -> default_metrics(f, TR; drop_warmup=drop_warmup, kwargs...), funs_all
+            f -> default_metrics(f, TR; drop_draws=drop_draws, kwargs...), funs_all
         )
         metric_tab = hcat(metric_tabs...)
     end
@@ -107,7 +107,7 @@ function Base.summary(
         for re in TR.modeldata.Z
             group = re.variable
 
-            level_draws = draws(TR, group; drop_warmup=drop_warmup, collapse=false, kwargs...)
+            level_draws = draws(TR, group; drop_draws=drop_draws, collapse=false, kwargs...)
             level_effect_names = collect(dims(level_draws, :effect))
             levels = collect(dims(level_draws, :group))
             for (ei, eff) in enumerate(level_effect_names)
@@ -131,7 +131,7 @@ function Base.summary(
                 )
             end
 
-            sd_draws = draws(TR, Symbol(group, "_sd"); drop_warmup=drop_warmup, collapse=false, kwargs...)
+            sd_draws = draws(TR, Symbol(group, "_sd"); drop_draws=drop_draws, collapse=false, kwargs...)
             effect_names = collect(dims(sd_draws, :effect))
             ranef_info = _diagnostics_table(sd_draws, effect_names, funs, func_names_all, quantiles)
             pretty_table(
@@ -154,7 +154,7 @@ function Base.summary(
 
             corr_sym = Symbol(group, "_corr")
             if corr_sym ∈ propertynames(TR.parameters)
-                corr_point = draws(mean, TR, corr_sym; drop_warmup=drop_warmup, kwargs...)
+                corr_point = draws(mean, TR, corr_sym; drop_draws=drop_draws, kwargs...)
                 pretty_table(
                     io,
                     Matrix(corr_point);

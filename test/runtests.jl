@@ -411,6 +411,24 @@ end # !DEV_SUBSET
         )
     end
 
+    @testset "Normal, no intercept" begin
+        Random.seed!(123)
+        mod = turing_glm(@formula(MPG ~ 0 + Cyl + Disp), mtcars, Normal)
+        record_timing!("Normal no-intercept (mtcars)", @elapsed @suppress fit!(mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true))
+
+        glm_mod = GLM.lm(@formula(MPG ~ 0 + Cyl + Disp), mtcars)
+        est = Array(draws(mean, mod, :fixef))
+        names = string.(collect(dims(draws(mean, mod, :fixef), :fixef))[1:2])
+        for (n, o, c) in zip(names, est[1:2], GLM.coef(glm_mod))
+            record_benchmark!("Normal no-intercept (mtcars)", n, o, c)
+        end
+
+        @test isapprox(GLM.coef(glm_mod), est[1:2], atol=0.3)
+        @test isapprox(
+            GLM.predict(glm_mod), Array(posterior_predict(mean, mod; type=:epred)), atol=1.0
+        )
+    end
+
     if !DEV_SUBSET
     @testset "Poisson" begin
         Random.seed!(123)

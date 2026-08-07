@@ -68,6 +68,12 @@ function turing_glm(formula::FormulaTerm,
     # stored on TR and reused by posterior_predict(TR, new_data::DataFrame) so grouping levels /
     # categorical contrasts are never re-derived from (possibly small/partial) new data.
     modeldata = extract_model_data(formula, data, weights)
+    if !has_intercept(modeldata) && has_fixed_effects(modeldata)
+        @warn "No-intercept formula: fixed-effect coefficients may be biased toward zero " *
+              "by the fixed-width fixed_effects prior. Consider adding an intercept, or " *
+              "widening the fixed_effects prior and checking the fit against an unregularised " *
+              "estimator (e.g. GLM.lm)."
+    end
     _, tf = standardise(modeldata, family)
 
     model_obj, model_code = construct_model(family, modeldata)

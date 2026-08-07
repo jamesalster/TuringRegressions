@@ -30,13 +30,16 @@ family_spec(::Type{<:Distribution})    = FamilySpec(false, ())  # Bernoulli, Poi
 Compute standardisation constants from raw `ModelData`. Pure — does not touch `md`.
 """
 function compute_transform(md::ModelData, family::Type{<:Distribution})
-    fixef = fit(ZScoreTransform, md.predictors.X, dims=1)
+    has_int = has_intercept(md)
+    fixef = fit(ZScoreTransform, md.predictors.X, dims=1; center=has_int)
     # No-intercept ranef terms skip centring: an intercept would absorb the mean_x*slope
     # cross term on back-transform, but there's nowhere to put it without one.
     ranef = [fit(ZScoreTransform, re.predictors.X, dims=1; center=re.predictors.has_intercept) for re in md.Z]
     scale_y = family_spec(family).scales_y
-    y = scale_y ? fit(ZScoreTransform, md.y) : fit(ZScoreTransform, md.y; center=false, scale=false)
-    y_mean, y_scale = scale_y ? (y.mean[1], y.scale[1]) : (0.0, 1.0)
+    center_y = scale_y && has_int
+    y = fit(ZScoreTransform, md.y; center=center_y, scale=scale_y)
+    y_mean = center_y ? y.mean[1] : 0.0
+    y_scale = scale_y ? y.scale[1] : 1.0
     return Transform(fixef, y, ranef, y_mean, y_scale)
 end
 

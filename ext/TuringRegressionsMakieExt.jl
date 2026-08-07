@@ -4,8 +4,8 @@ module TuringRegressionsMakieExt
 using TuringRegressions
 using Makie
 using Statistics: mean, median, quantile
-import TuringRegressions: lineribbon, lineribbon!, conditional_dependency, pp_check_dens, pp_check_dens_overlay, pp_check_hist
-import TuringRegressions: TuringRegression, predictors, posterior_predict, has_random_effects
+import TuringRegressions: lineribbon, lineribbon!, pp_check_dens, pp_check_dens_overlay, pp_check_hist
+import TuringRegressions: TuringRegression, posterior_predict
 
 """
     lineribbon(x, y; widths=[0.66, 0.95], colorscale="Greys", kwargs...)
@@ -71,52 +71,6 @@ function Makie.plot!(plot::LineRibbon)
     return plot
 end
 
-
-"""
-    conditional_dependency(TR::TuringRegression, variable::Symbol; type=:posterior, kwargs...)
-
-Plot how predictions change when varying one variable while holding others at their means.  
-    Kwargs are passed to Makie.Figure(). 
-"""
-function conditional_dependency(
-    TR::TuringRegression, variable::Symbol; type=:posterior, kwargs...
-)
-    if has_random_effects(TR)
-        @warn "conditional_dependency only varies fixed effects; random effects are held at their fitted values, not marginalised or re-predicted."
-    end
-    N = 200
-    pp = predictors(TR, :fixef)
-    var_names = collect(dims(pp, :var))
-    id = findfirst(==(string(variable)), var_names)
-    isnothing(id) && throw(ArgumentError("variable $variable not among fixed effects $(var_names)"))
-    means = mean(pp; dims=1)
-    predict_range = range.(extrema(pp[var = At(string(variable))])..., N)
-
-    # make prediction_grid
-    predgrid = zeros(N, length(means))
-    for i in eachindex(means)
-        if i == id
-            predgrid[:, i] = collect(predict_range)
-        else
-            predgrid[:, i] = fill(means[i], N)
-        end
-    end
-
-    preds = posterior_predict(TR, predgrid; type=type)
-
-    # plot
-    fig = Makie.Figure(kwargs...)
-    ax = Makie.Axis(
-        fig[1, 1];
-        title="Conditional Dependency Plot",
-        subtitle="Other variables held at their mean",
-        ylabel="Outcome",
-        xlabel=string(variable),
-    )
-    lineribbon!(ax, predgrid[:, id], preds')
-    Makie.scatter!(ax, hcat(pp[:, id], outcome(TR)))
-    fig
-end
 
 """
     pp_check_hist(TR::TuringRegression; bins=20, type=:posterior, kwargs...)

@@ -124,8 +124,10 @@ scatter(pair)
 triple = draws(mod, :fixef)[param=At([:α, :σ, :Cyl])]
 scatter(triple)
 
-# Conditional dependency provided as a function
-conditional_dependency(mod, :Disp)
+# Ribbon plot: median line + interval bands over draws at each x
+x = 1:0.1:5
+y = randn(1000, length(x))  # rows = draws, one column per x
+lineribbon(x, y)
 
 #PP check provided as a function
 pp_check_hist(mod; bins=30)
@@ -175,8 +177,7 @@ pp_check_dens_overlay(mod)
 * `default_metrics(model)` / `default_metrics(fun, model)` - Default model metrics
 
 ### Plots
-* `lineribbon!()` - Makie recipe for banded intervals, used in `conditional_dependency()`
-* `conditional_dependency(model, var)` - Show dependency of outcome on one variable
+* `lineribbon(x, y)`/`lineribbon!()` - Makie recipe: median line + interval ribbons, y = draws (rows) x x-positions (cols)
 * `pp_check_hist(model)` as well as `pp_check_dens()` and `pp_check_dens_overlay()` - Posterior predictive checks
 * See also the examples above for more quick plots
 

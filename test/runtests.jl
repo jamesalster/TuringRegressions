@@ -356,7 +356,6 @@ if !DEV_SUBSET
     quickfit!(mod)
 
     @test_nowarn lineribbon(1:10, randn(50, 10))
-    @test_nowarn conditional_dependency(mod, :Cyl)
     @test_nowarn pp_check_hist(mod)
     @test_nowarn pp_check_dens(mod)
     @test_nowarn pp_check_dens_overlay(mod; n_draws=20)

@@ -96,7 +96,6 @@ export TuringRegression,
     pseudo_r2,
     lineribbon,
     lineribbon!,
-    conditional_dependency,
     pp_check_dens,
     pp_check_dens_overlay,
     pp_check_hist

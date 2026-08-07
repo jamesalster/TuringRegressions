@@ -123,3 +123,6 @@ function reshape_params(raw::DimArray, md::ModelData, family::Type{<:Distributio
     end
     return DimStack(layers)
 end
+
+# NOTE: back-transform (standardised -> original scale) lives in unstandardise.jl,
+# not here — this file is pure structural reshuffle (see module docstring above).

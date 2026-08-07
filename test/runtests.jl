@@ -289,17 +289,22 @@ if !DEV_SUBSET
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
     quickfit!(mod)
 
-    show_output = sprint(show, mod)
+    compact_output = sprint(show, mod)
+    @test contains(compact_output, "TuringRegression{Normal}")
+    @test !contains(compact_output, "Fixed Effects")
+
+    show_output = sprint(show, MIME("text/plain"), mod)
     @test contains(show_output, "TuringRegression Model")
     @test contains(show_output, "Normal")
     @test contains(show_output, "MPG")
 
-    summary_output = sprint((io, x) -> summary(io, x; show_metrics=true), mod)
+    summary_output = sprint((io, x) -> model_summary(io, x; show_metrics=true), mod)
+    @test contains(summary_output, "Family:")
     @test contains(summary_output, "Fixed Effects")
     @test all(contains.(Ref(summary_output), ["mean", "std", "ess_bulk", "ess_tail", "rhat"]))
     @test contains(summary_output, "Prediction Metrics")
 
-    summary_no_metrics = sprint(summary, mod)
+    summary_no_metrics = sprint(model_summary, mod)
     @test !contains(summary_no_metrics, "Prediction Metrics")
 
     Random.seed!(123)
@@ -307,10 +312,15 @@ if !DEV_SUBSET
         @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal
     )
     quickfit!(mod_re)
-    re_output = sprint(summary, mod_re)
+    re_output = sprint(model_summary, mod_re)
     @test contains(re_output, "Random Effects: Subject")
     @test contains(re_output, "(SD)")
     @test contains(re_output, "Correlation")
+
+    # displaying a Vector{TuringRegression} must stay compact and never warn
+    vec_output = sprint(show, [mod, mod])
+    @test contains(vec_output, "TuringRegression{Normal}")
+    @test !contains(vec_output, "rhat")
 end
 end # !DEV_SUBSET
 

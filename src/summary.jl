@@ -36,7 +36,7 @@ function _diagnostics_table(arr, labels, funs, func_names_all, quantiles)
 end
 
 """
-    summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_draws=nothing, kwargs...)
+    model_summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_draws=nothing, kwargs...)
 
 Display formatted summary table of model parameters.
 
@@ -50,7 +50,7 @@ Display formatted summary table of model parameters.
 - `show_metrics`: Whether to compute and display the prediction metrics table (default: false)
 - `kwargs...`: Additional arguments passed to `draws`/`default_metrics` (e.g. `n_draws`)
 """
-function Base.summary(
+function model_summary(
     io::IO,
     TR::TuringRegression;
     funs=[mean, std],
@@ -83,8 +83,12 @@ function Base.summary(
         metric_tab = hcat(metric_tabs...)
     end
 
-    # show
-    show(io, TR; warnings=false)
+    # header: family/formula/observations/samples, no prior — same content as the full
+    # show(io, MIME"text/plain", TR) minus the prior block
+    label_style = crayon"bold !underline"
+    normal_style = crayon"reset"
+    _print_family_formula(io, TR, label_style, normal_style)
+    _print_obs_samples(io, TR, label_style, normal_style)
     println(io)
     pretty_table(
         io,
@@ -189,9 +193,7 @@ function Base.summary(
 end
 
 # Catch-all method for non-IO calls
-function Base.summary(TR::TuringRegression, args...; kwargs...)
-    summary(stdout, TR, args...; kwargs...)
-end
+model_summary(TR::TuringRegression, args...; kwargs...) = model_summary(stdout, TR, args...; kwargs...)
 
 function model_warnings(chain_info)
     #warnings

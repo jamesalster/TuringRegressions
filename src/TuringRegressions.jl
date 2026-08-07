@@ -83,6 +83,7 @@ end
 export TuringRegression,
     turing_glm,
     model_warnings,
+    model_summary,
     draws,
     outcome,
     predictors,

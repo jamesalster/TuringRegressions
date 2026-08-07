@@ -166,34 +166,21 @@ function prior_summary(io::IO, TR::TuringRegression{T}) where {T}
 end
 prior_summary(TR::TuringRegression) = prior_summary(stdout, TR)
 
-"""
-    show(io, TR::TuringRegression)
-
-Print a summary of the model: family, formula, priors, and sample status.
-"""
-function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
-    header_style = crayon"bold underline"
-    label_style = crayon"bold !underline"
-    normal_style = crayon"reset"
-
-    println(io, header_style, "TuringRegression Model")
-
-    # Family
+# Family/formula lines, shared by the full show and model_summary's header.
+function _print_family_formula(io::IO, TR::TuringRegression{T}, label_style, normal_style) where {T}
     print(io, label_style, "Family: ")
     family_string = "$T (link: $(string(TR.link)))"
     println(io, normal_style, family_string)
 
-    # Formula
     print(io, label_style, "Formula: ")
     println(io, normal_style, string(TR.formula))
+end
 
-    _print_prior(io, TR.prior, T, label_style, normal_style; has_ranef=has_random_effects(TR))
-
-    # Observations
+# Observations/samples lines, shared by the full show and model_summary's header.
+function _print_obs_samples(io::IO, TR::TuringRegression, label_style, normal_style)
     print(io, label_style, "Observations: ")
     println(io, normal_style, size(TR.modeldata.predictors.X, 1))
 
-    # Samples
     print(io, label_style, "Samples: ")
     if isnothing(TR.samples)
         println(io, normal_style, "empty")
@@ -201,6 +188,22 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
         sz = size(TR.samples)  # FlexiChain: (iter, chain)
         println(io, normal_style, "$(sz[1] * sz[2]) samples across $(sz[2]) chains")
     end
+end
+
+"""
+    show(io, ::MIME"text/plain", TR::TuringRegression)
+
+Print a full summary of the model: family, formula, priors, and sample status.
+"""
+function Base.show(io::IO, ::MIME"text/plain", TR::TuringRegression{T}; warnings=true) where {T}
+    header_style = crayon"bold underline"
+    label_style = crayon"bold !underline"
+    normal_style = crayon"reset"
+
+    println(io, header_style, "TuringRegression Model")
+    _print_family_formula(io, TR, label_style, normal_style)
+    _print_prior(io, TR.prior, T, label_style, normal_style; has_ranef=has_random_effects(TR))
+    _print_obs_samples(io, TR, label_style, normal_style)
 
     if warnings
         println(io)
@@ -208,8 +211,49 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
     end
 end
 
+"""
+    show(io, TR::TuringRegression)
+
+Compact one-line display, used inside containers. Never warns.
+"""
+function Base.show(io::IO, TR::TuringRegression{T}) where {T}
+    status = isnothing(TR.samples) ? "not fitted" : "fitted"
+    print(io, "TuringRegression{$T}($(TR.formula), $status)")
+end
+
+"""
+    summary(TR::TuringRegression)
+
+One-line summary: family, formula, observations, samples (Base `summary` contract — returns a `String`).
+"""
+function Base.summary(io::IO, TR::TuringRegression{T}) where {T}
+    n = size(TR.modeldata.predictors.X, 1)
+    sample_status = if isnothing(TR.samples)
+        "empty"
+    else
+        sz = size(TR.samples)  # FlexiChain: (iter, chain)
+        "$(sz[1] * sz[2]) samples across $(sz[2]) chains"
+    end
+    print(io, "TuringRegression{$T}: $(TR.formula), n=$n, $sample_status")
+end
+
 
 #### Methods ####
+
+# Derives the grouping arrays (n_groups/group_idx/group_predictors) from ModelData.Z
+# once, then calls the model with its unpacked-argument signature. Shared with psis_loo
+# (comparison.jl), which needs the same conditioned model.
+function _build_model_with_data(TR::TuringRegression)
+    md = apply_transform(TR.tf, TR.modeldata)
+    Z = md.Z
+    n_groups = [length(re.levels) for re in Z]
+    group_idx = isempty(Z) ? Matrix{Int}(undef, length(md.y), 0) : reduce(hcat, (re.level_index for re in Z))
+    group_predictors = [re.predictors.X for re in Z]
+    weights = something(md.weights, ones(length(md.y)))
+    pr = TR.prior
+    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights,
+        pr.intercept, pr.fixed_effects, pr.random_effect_variance, pr.auxiliary)
+end
 
 """
     fit!(TR::TuringRegression; sampler, parallel, samples, nchains, warmup, quiet, kwargs...)
@@ -239,21 +283,6 @@ already-kept draws at extraction time.
 fit!(model, samples=4000, nchains=4)  # 1000 kept per chain
 ```
 """
-# Derives the grouping arrays (n_groups/group_idx/group_predictors) from ModelData.Z
-# once, then calls the model with its unpacked-argument signature. Shared with psis_loo
-# (comparison.jl), which needs the same conditioned model.
-function _build_model_with_data(TR::TuringRegression)
-    md = apply_transform(TR.tf, TR.modeldata)
-    Z = md.Z
-    n_groups = [length(re.levels) for re in Z]
-    group_idx = isempty(Z) ? Matrix{Int}(undef, length(md.y), 0) : reduce(hcat, (re.level_index for re in Z))
-    group_predictors = [re.predictors.X for re in Z]
-    weights = something(md.weights, ones(length(md.y)))
-    pr = TR.prior
-    return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights,
-        pr.intercept, pr.fixed_effects, pr.random_effect_variance, pr.auxiliary)
-end
-
 function fit!(
     TR::TuringRegression{T};
     sampler=NUTS(; adtype=has_random_effects(TR.modeldata) ? AutoReverseDiff(; compile=true) : AutoForwardDiff()),

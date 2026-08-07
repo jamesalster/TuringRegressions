@@ -49,8 +49,8 @@ mod = turing_glm(
 fit!(mod, N=1000, nchains=2)
 
 # View results
-summary(mod)
-summary(mod; show_metrics=true) # Just taken from posterior draws
+model_summary(mod)
+model_summary(mod; show_metrics=true) # Just taken from posterior draws
 prior_summary(mod) # Just the prior block — same as show(mod), no formula/samples/warnings
 
 # Get coefficients
@@ -168,7 +168,7 @@ pp_check_dens_overlay(mod)
 * MLE-only stats with no Bayesian analogue (`dof`, `aic`/`bic`, `r2`, `leverage`, ...) raise a clear error instead of a number — see `psis_loo`/`loo_compare` for model comparison
 
 ### Utilities
-* `summary(model)` - Formatted summary with diagnostics (rhat, ess, mcse)
+* `model_summary(model)` - Formatted summary with diagnostics (rhat, ess, mcse)
 * `model_warnings(model)` - Report rhat/ess/mcse warnings
 * `calculate_metrics(model, [metrics]; threshold=0.5, kwargs...)` - Model metrics (from StatisticalMeasures.jl)
 * `calculate_metrics(fun, model, [metrics]; kwargs...)` - Reduce draws with `fun` first, matching `draws`

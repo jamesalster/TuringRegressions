@@ -11,6 +11,13 @@ evaluated on during sampling.
 Always uses all of `TR.samples` (`drop_draws=0` internally) — LOO needs the
 full kept posterior, not a user-trimmed subset. `psis_loo`'s `kwargs...` go to
 `PosteriorStats.loo`, not here.
+
+CAVEAT on weighted models: observation weights are multiplied into each pointwise
+term, so a row with weight `w` stands in for `w` observations. That is not the
+exchangeable one-row-one-observation object PSIS assumes — leaving such a row out
+drops `w` observations at once, so the resulting ELPD and its standard error are
+not comparable to an unweighted fit's. Treat weighted `psis_loo`/`loo_compare`
+results as indicative only.
 """
 function pointwise_loglik(TR::TuringRegression{T}) where {T}
     isnothing(TR.samples) && throw(ArgumentError("Model has not been fitted."))

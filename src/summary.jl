@@ -269,5 +269,7 @@ end
 # Default table options
 const default_options = (;
     style=TextTableStyle(; column_label=crayon"bold", stubhead_label=crayon"bold"),
-    fit_table_in_display_horizontally=false,
+    # true = crop overflowing columns with `⋯` rather than letting the terminal wrap the
+    # row onto the next line, which makes a wide summary unreadable
+    fit_table_in_display_horizontally=true,
 )

@@ -226,11 +226,11 @@ function build_model_body(family::Type{<:Distribution}, modeldata::ModelData)
     return body, labels
 end
 
-#### Wrapper function for the above, to handle some additional logic
-function construct_model(family::Type{<:Distribution}, modeldata::ModelData)
+#### Build the raw @model Expr (unevaluated) — shared by construct_model and modelcode
+# so the printed/returned code is exactly what actually runs, not a re-derived copy.
+function build_model_expr(family::Type{<:Distribution}, modeldata::ModelData)
     body, _ = build_model_body(family, modeldata)
 
-    # build model code
     # Unique name per generated model: DynamicPPL dispatches model evaluation on
     # typeof(f), so reusing "turing_regression" for every model let Turing's
     # internal AD/dual-number caches (keyed on that shared type) leak between
@@ -239,7 +239,7 @@ function construct_model(family::Type{<:Distribution}, modeldata::ModelData)
     # Priors passed as separate runtime args, not baked into the Expr or bundled
     # into a struct — keeps model shape prior-independent for a (currently unused)
     # future cache keyed on that shape.
-    model_code = quote
+    return quote
         @model function $(fname)(y, X, n_groups, group_idx, group_predictors, weights,
             prior_intercept, prior_fixed_effects, prior_random_effect_variance, prior_auxiliary,
             prior_lkj_eta)
@@ -247,17 +247,25 @@ function construct_model(family::Type{<:Distribution}, modeldata::ModelData)
             $body
         end
     end
+end
 
-    return eval(model_code)
+#### Wrapper function for the above, to handle some additional logic
+function construct_model(family::Type{<:Distribution}, modeldata::ModelData)
+    return eval(build_model_expr(family, modeldata))
 end
 
 """
-    modelcode(TR::TuringRegression)
+    modelcode(TR::TuringRegression) -> Expr
 
 Print the generated Turing model code for `TR`, annotated with a comment
-header per section (priors / linear model / likelihood). Rebuilds the code
-fragments on demand from `TR.modeldata` — display-only, no effect on the
+header per section (priors / linear model / likelihood), and RETURN the
+underlying `Expr` — the same one `construct_model` would `eval`. Rebuilds on
+demand from `TR.modeldata` — this is always the STANDARD generated model, not
+any edited version previously passed to `set_model_code!`; no effect on the
 already-fitted model.
+
+Edit the returned `Expr` and pass it to `set_model_code!(TR, expr)` to swap in
+a hand-modified model. Read `set_model_code!`'s docstring before using it.
 """
 function modelcode(TR::TuringRegression{T}) where {T}
     body, labels = build_model_body(T, TR.modeldata)
@@ -270,5 +278,37 @@ function modelcode(TR::TuringRegression{T}) where {T}
     $(join(sections, "\n\n"))
     end
     """)
-    return nothing
+    return build_model_expr(T, TR.modeldata)
+end
+
+"""
+    set_model_code!(TR::TuringRegression, expr::Expr) -> TuringRegression
+
+Override `TR`'s generated model with a hand-edited `Expr` (start from
+`modelcode(TR)`, edit, pass back in). Evals `expr` and replaces `TR.model`.
+
+Before using:
+- `expr` must eval to a callable taking exactly `(y, X, n_groups, group_idx,
+  group_predictors, weights, prior_intercept, prior_fixed_effects,
+  prior_random_effect_variance, prior_auxiliary, prior_lkj_eta)` in that
+  order — `fit!` calls it positionally. Wrong signature → `MethodError` at
+  `fit!` time, not here.
+- Sampled VarNames in the body must keep their roots (`:α`, `:β`, family aux,
+  per-ranef `σ_z_<i>`/`r_z_<i>`/`L_z_<i>`) — rename/drop one and post-fit
+  reshaping fails loudly rather than silently mislabeling draws.
+- `expr` is `eval`'d once; only the resulting `Function` is kept (`TR.model`) —
+  the edited source itself isn't stored anywhere on `TR`.
+- Resets `TR.samples`/`TR.parameters` to `nothing` — they're draws from the
+  OLD model, keeping them would silently pass off stale results as current.
+  Refit after calling this.
+"""
+function set_model_code!(TR::TuringRegression, expr::Expr)
+    model_fn = eval(expr)
+    model_fn isa Function || throw(ArgumentError(
+        "expr must eval to a Function, got $(typeof(model_fn))"
+    ))
+    TR.model = model_fn
+    TR.samples = nothing
+    TR.parameters = nothing
+    return TR
 end

@@ -11,7 +11,7 @@ Design Features:
 * Fixed and Random effects supported, including varying slopes
 * Models run on standardised scale for performance to ensure correct outputs vs GLM/lme4 (three fits are exactly benchmarked in tests)
 * Priors are somewhat customisable, and specified on standardised scale
-* Model code dynamically constructed, can be viewed and exported
+* Model code dynamically constructed, can be viewed and exported and also modified manually
 * Sampling performance in NUTS optimised as far as possible; ReverseDiff used for random effect models to improve performance
 * Outputs use `DimensionalData` for easy indexing
 * `PrettyTable` model summaries, with prediction metrics
@@ -175,6 +175,8 @@ pp_check_dens_overlay(mod)
 * `calculate_metrics(model, [metrics]; threshold=0.5, kwargs...)` - Model metrics (from StatisticalMeasures.jl)
 * `calculate_metrics(fun, model, [metrics]; kwargs...)` - Reduce draws with `fun` first, matching `draws`
 * `default_metrics(model)` / `default_metrics(fun, model)` - Default model metrics
+* `modelcode(model)` - Print + return the generated Turing `@model` code as an `Expr`
+* `set_model_code!(model, expr)` - Override the model with a hand-edited `Expr` (from `modelcode`); read docstring before using
 
 ### Plots
 * `lineribbon(x, y)`/`lineribbon!()` - Makie recipe: median line + interval ribbons, y = draws (rows) x x-positions (cols)

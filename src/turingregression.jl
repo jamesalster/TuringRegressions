@@ -272,7 +272,12 @@ end
 """
     fit!(TR::TuringRegression; sampler, parallel, samples, nchains, warmup, quiet, kwargs...)
 
-Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passed to Turing's `sample()`.
+Run MCMC sampling to fit the model. Updates the model in-place. Unrecognised kwargs
+are passed straight to Turing's `sample()`.
+
+**`samples`/`warmup` diverge from Turing's `sample()` on purpose** — TOTALS across all
+chains (see Budget), not Turing's per-chain `N`/`nadapts`. Everything else (`sampler`,
+`parallel`, `nchains`, `initial_params`) matches Turing directly.
 
 Budget: both `samples` (kept draws) and `warmup` (adaptation draws, discarded) are
 TOTALS across all chains, split evenly over `nchains`. Division rounds UP (`cld`), so
@@ -315,10 +320,20 @@ function fit!(
     return Base.invokelatest(_fit!, TR; sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...)
 end
 
+const _TURING_SAMPLE_COLLISION_KWARGS = (:N, :nadapts, :discard_initial, :chain_type)
+
 function _fit!(
     TR::TuringRegression{T};
     sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...,
 ) where {T}
+    # computed internally from samples/warmup/nchains — reject to avoid a silent collide
+    collided = filter(k -> haskey(kwargs, k), _TURING_SAMPLE_COLLISION_KWARGS)
+    isempty(collided) || throw(ArgumentError(
+        "fit! computes $(join(_TURING_SAMPLE_COLLISION_KWARGS, ", ")) internally from " *
+        "samples/warmup/nchains — got $(join(collided, ", ")) as a kwarg. Use " *
+        "samples/warmup/nchains instead."
+    ))
+
     model_with_data = _build_model_with_data(TR)
 
     # `samples` and `warmup` are totals across chains; split with ceil division so the

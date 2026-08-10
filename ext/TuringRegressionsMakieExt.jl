@@ -81,8 +81,8 @@ function pp_check_hist(TR::TuringRegression; bins=20, type=:posterior, kwargs...
     preds = posterior_predict(median, TR; type=type)
     fig = Makie.Figure(kwargs...)
     ax = Makie.Axis(fig[1, 1]; title="Posterior Predictive Check", xlabel="Outcome")
-    Makie.hist!(ax, preds; label="Predictions", bins=bins)
-    Makie.hist!(ax, outcome(TR); label="Data", bins=bins)
+    Makie.hist!(ax, preds; label="Predictions", bins=bins, alpha=0.3)
+    Makie.hist!(ax, outcome(TR); label="Data", bins=bins, alpha=0.3)
     Makie.axislegend(ax; position=:rt)
     fig
 end
@@ -98,8 +98,8 @@ function pp_check_dens(
     preds = posterior_predict(median, TR; type=type)
     fig = Makie.Figure(kwargs...)
     ax = Makie.Axis(fig[1, 1]; title="Posterior Predictive Check", xlabel="Outcome")
-    Makie.density!(ax, preds; bandwidth=bandwidth, label="Predictions")
-    Makie.density!(ax, outcome(TR); bandwidth=bandwidth, label="Data")
+    Makie.density!(ax, preds; bandwidth=bandwidth, label="Predictions", alpha=0.3)
+    Makie.density!(ax, outcome(TR); bandwidth=bandwidth, label="Data", alpha=0.3)
     Makie.axislegend(ax; position=:rt)
     fig
 end

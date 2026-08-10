@@ -41,7 +41,7 @@ function _random_effects(modeldata::ModelData)
             n_predictors = size(ranef.predictors.X, 2) + 1
             push!(body.args, quote
                 $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
-                $L_ranef ~ LKJCholesky($n_predictors, 1.0)
+                $L_ranef ~ LKJCholesky($n_predictors, prior_lkj_eta)
                 $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
                 # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
                 $ranef_matrix = (diagm($variance_ranef) * $L_ranef.L * $ranef_matrix_raw)'
@@ -236,9 +236,13 @@ function construct_model(family::Type{<:Distribution}, modeldata::ModelData)
     # internal AD/dual-number caches (keyed on that shared type) leak between
     # models with different parameter counts, causing BoundsErrors during sampling.
     fname = gensym(:turing_regression)
+    # Priors passed as separate runtime args, not baked into the Expr or bundled
+    # into a struct — keeps model shape prior-independent for a (currently unused)
+    # future cache keyed on that shape.
     model_code = quote
         @model function $(fname)(y, X, n_groups, group_idx, group_predictors, weights,
-            prior_intercept, prior_fixed_effects, prior_random_effect_variance, prior_auxiliary)
+            prior_intercept, prior_fixed_effects, prior_random_effect_variance, prior_auxiliary,
+            prior_lkj_eta)
             nobs, npredictors = size(X)
             $body
         end
@@ -260,7 +264,8 @@ function modelcode(TR::TuringRegression{T}) where {T}
     sections = ["    # $label\n" * string(prettify(frag)) for (label, frag) in zip(labels, body.args)]
     println("""
     @model function turing_model(y, X, n_groups, group_idx, group_predictors, weights,
-        prior_intercept, prior_fixed_effects, prior_random_effect_variance, prior_auxiliary)
+        prior_intercept, prior_fixed_effects, prior_random_effect_variance, prior_auxiliary,
+        prior_lkj_eta)
         nobs, npredictors = size(X)
     $(join(sections, "\n\n"))
     end

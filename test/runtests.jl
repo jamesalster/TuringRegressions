@@ -370,6 +370,11 @@ if !DEV_SUBSET
     mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
     @suppress fit!(mod; samples=50, warmup=50, nchains=1, quiet=true)
     @test_logs (:warn,) match_mode = :any model_warnings(mod)
+
+    # no-intercept formula + fixed effects warns about prior-induced shrinkage bias
+    @test_logs (:warn, r"No-intercept formula") turing_glm(
+        @formula(MPG ~ 0 + Cyl + Disp), mtcars, Normal
+    )
 end
 end # !DEV_SUBSET
 
@@ -559,6 +564,26 @@ end
 
         corr = draws(mod, :Subject_corr)
         @test size(corr) == (2, 2, size(corr, :iter))
+    end
+
+    @testset "lkj_eta prior override" begin
+        Random.seed!(123)
+        default_pr = default_prior(Normal)
+        @test default_pr.lkj_eta == 1.0
+        wide_pr = default_prior(Normal; lkj_eta=20.0)
+        @test wide_pr.lkj_eta == 20.0
+        @test wide_pr.intercept == default_pr.intercept # other fields untouched
+
+        mod = turing_glm(
+            @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal;
+            priors=wide_pr,
+        )
+        quickfit!(mod)
+        @test mod.prior.lkj_eta == 20.0
+
+        corr = draws(mod, :Subject_corr)
+        off_diag = abs(mean(corr[1, 2, :]))
+        @test off_diag < 0.5 # high eta shrinks correlation toward 0
     end
 
     if !DEV_SUBSET

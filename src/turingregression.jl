@@ -148,6 +148,8 @@ function _print_prior(io::IO, pr::RegressionPrior, family::Type{<:Distribution},
     if has_ranef
         print(io, normal_style, "  Random Effect Variance: ")
         println(io, normal_style, clean_prior_string(string(pr.random_effect_variance)))
+        print(io, normal_style, "  Random Effect Correlation (LKJ η): ")
+        println(io, normal_style, pr.lkj_eta)
     end
 
     if family == TDist
@@ -264,7 +266,7 @@ function _build_model_with_data(TR::TuringRegression)
     weights = something(md.weights, ones(length(md.y)))
     pr = TR.prior
     return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights,
-        pr.intercept, pr.fixed_effects, pr.random_effect_variance, pr.auxiliary)
+        pr.intercept, pr.fixed_effects, pr.random_effect_variance, pr.auxiliary, pr.lkj_eta)
 end
 
 """

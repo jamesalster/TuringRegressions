@@ -22,6 +22,7 @@ import StatsAPI: RegressionModel
 using Turing
 using ReverseDiff
 using PrettyTables
+using Crayons: @crayon_str
 using MixedModels
 using Random
 using StatisticalMeasures
@@ -64,7 +65,7 @@ include("statsapi.jl")
 # Ranef `fit!`/`sample()` NOT precompiled: its default adtype (AutoReverseDiff)
 # segfaults on package-image reload — a Turing/DynamicPPL serialization
 # limitation, not fixable here. Ranef models still benefit substantially from
-# the shared generic slice below (see bench/BENCHLOG.md).
+# the shared generic slice below.
 @compile_workload begin
     df = DataFrame(y=[1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
         x=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],

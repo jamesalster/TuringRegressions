@@ -1,6 +1,8 @@
 
 #### Back-transform of drawn params: standardised-scale DimStack -> original-scale
 # DimStack. Pure rescale, no structural reshuffling — see reshape.jl.
+# Inverse of standardise.jl applied to the draws, once, post-fit — so the model never
+# carries it. Everything downstream is original-scale; only the priors stay std-scale.
 
 """
     coef_map(has_intercept::Bool, xt::ZScoreTransform, y_scale::Float64) -> AbstractMatrix

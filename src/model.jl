@@ -16,6 +16,9 @@ function _fixed_effects()
 end
 
 # prior arg: prior_random_effect_variance (shared across all ranef groups)
+# All branches non-centred (sample unit-scale z_raw, multiply by σ) — sampling effects
+# directly makes their width depend on σ, a funnel NUTS can't pick one step size for.
+# Branch = shape of the term: (1 + x | g) correlated / (0 + x | g) slopes / (1 | g).
 function _random_effects(modeldata::ModelData)
     model_ranef = modeldata.Z
     body = Expr(:block)
@@ -32,20 +35,21 @@ function _random_effects(modeldata::ModelData)
         ranef_matrix = Symbol("ranef_z_",i)
         L_ranef = Symbol("L_z_",i)
 
-        # No free mean parameter here: the population-level α/β already model the
-        # mean effect. A free ranef mean would be additively confounded with β
-        # (only their sum is identified), producing a slow/degenerate NUTS ridge
-        # and biased marginals. Ranef components are mean-zero by construction.
         #Build varying slopes prior
+        # (1 + x | g): intercept and slopes usually correlate, so joint prior — SDs and
+        # a correlation matrix, split so each half takes its own prior.
         if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2) + 1
             push!(body.args, quote
                 $variance_ranef ~ filldist(prior_random_effect_variance, $n_predictors)
+                # Correlation matrix prior, decomposed
                 $L_ranef ~ LKJCholesky($n_predictors, prior_lkj_eta)
                 $ranef_matrix_raw ~ filldist(MvNormal(zeros($n_predictors), I), n_groups[$i])
-                # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z
+                # Transform: Σ^(1/2) * z_raw, where Σ^(1/2) = diag(σ_z) * L_z.
+                # Transposed so rows are groups — the linear model indexes by group.
                 $ranef_matrix = (diagm($variance_ranef) * $L_ranef.L * $ranef_matrix_raw)'
             end)
+        # (0 + x | g): no intercept to correlate with, so no LKJ — independent SD each.
         elseif TuringRegressions.has_fixed_effects(ranef.predictors)
             n_predictors = size(ranef.predictors.X, 2)
             push!(body.args, quote
@@ -53,6 +57,7 @@ function _random_effects(modeldata::ModelData)
                 $ranef_matrix_raw ~ filldist(Normal(), $n_predictors, n_groups[$i])
                 $ranef_matrix = ($variance_ranef .* $ranef_matrix_raw)'
             end)
+        # (1 | g): one offset per group, the plain varying-intercept case.
         elseif ranef.predictors.has_intercept
             n_predictors = 1
             push!(body.args, quote
@@ -105,6 +110,8 @@ function _linear_model(modeldata::ModelData)
             ranef_matrix = Symbol("ranef_z_", i)
             predictors = :(group_predictors[$i])
 
+            # Columns as _random_effects built them: intercept first (if present), then
+            # slopes. Row-indexing by group_idx fans each group's effect out to its obs.
             if ranef.predictors.has_intercept & has_fixed_effects(ranef.predictors)
                 push!(terms, :($ranef_matrix[group_idx[:,$i], 1]))
                 n_slope = size(ranef.predictors.X, 2)

@@ -87,6 +87,10 @@ draws(mean, re_mod, :Subject)[effect=At(:Days), group=At("308")] # one subject's
 draws(re_mod, :Subject_sd) # group-level SDs, dims (effect, draw)
 draws(re_mod, :Subject_corr) # intercept/slope correlation matrix, dims (effect, effect2, draw)
 
+# MixedModels-style nested (`a/b`) and interaction (`a&b`) grouping formulas are supported.
+turing_glm(@formula(Reaction ~ 1 + Days + (1 | Batch / Subject)), sleepstudy, Normal)   # -> :Batch, :Batch__Subject
+turing_glm(@formula(Reaction ~ 1 + Days + (1 | Batch & Subject)), sleepstudy, Normal)   # -> :Batch__Subject
+
 # Make predictions (full posterior — the package's primary predict API)
 posterior_predict(mod)  # For original data
 posterior_predict(mod, type=:epred)  # Expected values

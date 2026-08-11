@@ -162,12 +162,12 @@ try # keep going through sibling testsets on failure, still print the benchmark 
     @testset "nested and interaction grouping" begin
         nested = TR.extract_model_data(@formula(Reaction ~ 1 + Days + (1 | Batch / Subject)), sleepstudy)
         # MixedModels expands a/b into two separate grouping terms, not one
-        @test [z.variable for z in nested.Z] == [:Batch, Symbol("Batch:Subject")]
+        @test [z.variable for z in nested.Z] == [:Batch, :Batch__Subject]
         @test length(nested.Z[1].levels) == 2
         @test length(nested.Z[2].levels) == 18  # every Subject sits in exactly one Batch
 
         interaction = TR.extract_model_data(@formula(Reaction ~ 1 + Days + (1 | Batch & Subject)), sleepstudy)
-        @test [z.variable for z in interaction.Z] == [Symbol("Batch:Subject")]
+        @test [z.variable for z in interaction.Z] == [:Batch__Subject]
     end
 
     # Layers are keyed by grouping variable, so two terms on the same group collide
@@ -639,6 +639,29 @@ end
         # no correlation matrix when there is only one effect per group
         @test !contains(sprint(model_summary, re_intercept), "Correlation")
     end
+end
+
+# T59: two ranef terms of different level counts (Batch=2, Batch:Subject=18) used to
+# collide in TR.parameters — both terms shared the literal dim name `:group`, which
+# DimStack requires to have one consistent length across all its layers.
+@testset "Random effects — nested/interaction grouping (Batch/Subject)" begin
+    nested = fitmodel(@formula(Reaction ~ 1 + Days + (1 | Batch / Subject)), sleepstudy, Normal)
+    interaction = fitmodel(@formula(Reaction ~ 1 + Days + (1 | Batch & Subject)), sleepstudy, Normal)
+
+    @test propertynames(nested.parameters) == (:fixef, :Batch, :Batch_sd, :Batch__Subject, :Batch__Subject_sd)
+    @test propertynames(interaction.parameters) == (:fixef, :Batch__Subject, :Batch__Subject_sd)
+
+    batch_draws = draws(nested, :Batch)
+    @test collect(dims(batch_draws, :group)) == ["p", "q"]
+
+    nested_draws = draws(nested, :Batch__Subject)
+    @test size(nested_draws, :group) == 18
+
+    interaction_draws = draws(interaction, :Batch__Subject)
+    @test size(interaction_draws, :group) == 18
+
+    @test contains(sprint(model_summary, nested), "Random Effects: Batch (Intercept)")
+    @test contains(sprint(model_summary, nested), "Random Effects: Batch__Subject (Intercept)")
 end
 
 @testset "Random effects — Poisson (cbpp)" begin

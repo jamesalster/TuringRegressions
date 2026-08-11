@@ -42,7 +42,7 @@ Extract specific draws from fitted model as `DimArray` (or `DimStack` if `type` 
 Passing a function (e.g. median) aggregates the draws with that function.
 
 # Arguments
-- `type`: Symbol for the type of draw. Can be `:fixef`, :`{ranef_name}`, :{ranef_name}_sd`, `:{group_name}_corr`, `:internals`
+- `type`: Symbol for the type of draw. Can be `:fixef`, `:{ranef_name}`, `:{ranef_name}_sd`, `:{group_name}_corr`
 - `drop_draws`: Number of extra warmup samples to drop from each chain, on top of what `fit!` already discarded during Turing's adaptation phase (default is `0` — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
 - `n_draws`: Number of draws to keep (default is `Inf` for all available draws)
 - `collapse`: Whether to collapse chains into single dimension (default is `true`)
@@ -58,6 +58,10 @@ function draws(TR::TuringRegression, type::Symbol; kwargs...)
     available_types = propertynames(TR.parameters)
     type ∉ available_types && throw(ArgumentError("type $type not available, must be one of: $available_types"))
     arr = _process_draws(TR.parameters[type]; kwargs...)
+    # Group layers are stored under a per-term unique dim name (reshape.jl) so multiple
+    # ranef terms with different level counts can share one DimStack; renamed to the
+    # public `:group` name here since a single extracted layer has no name collision.
+    hasdim(arr, _group_dim_name(type)) && (arr = set(arr, _group_dim_name(type) => :group))
     return arr
 end
 function draws(f::Function, TR::TuringRegression, type::Symbol; dropdims=true, kwargs...)

@@ -6,6 +6,12 @@
 
 _select_param(raw::DimArray, root::Symbol) = raw[param=findall(==(root), getsym.(dims(raw, :param)))]
 
+# DimStack requires a dim NAME to have one length across all layers, so two ranef terms
+# with different level counts (e.g. nested `a/b` grouping) can't both use a literal
+# `:group` dim. Give each term's group axis a unique name instead; `draws(TR, type)`
+# (parametermethods.jl) renames it back to `:group` on the single-layer array it returns.
+_group_dim_name(group) = Symbol(:group_, group)
+
 # Unflatten the trailing (raw) idx dim of `sub` (dims :iter, :chain, :idx) into `shape`,
 # relying on FlexiChains preserving the sampled container's column-major element order.
 function _unflatten(sub::DimArray, shape::Tuple{Vararg{Int}})
@@ -87,7 +93,7 @@ function _ranef_layers(raw::DimArray, i::Int, ranef::RandomEffect)
             R[:, :, d, c] = L[:, :, d, c] * L[:, :, d, c]'
         end
         return (;
-            Symbol(group) => DimArray(M, (Dim{:effect}(names), Dim{:group}(ranef.levels), draw_chain...)),
+            Symbol(group) => DimArray(M, (Dim{:effect}(names), Dim{_group_dim_name(group)}(ranef.levels), draw_chain...)),
             Symbol(group, "_sd") => DimArray(σz, (Dim{:effect}(names), draw_chain...)),
             Symbol(group, "_corr") => DimArray(R, (Dim{:effect}(names), Dim{:effect2}(names), draw_chain...)),
         )
@@ -95,7 +101,7 @@ function _ranef_layers(raw::DimArray, i::Int, ranef::RandomEffect)
         # Effects independent (intercept-only or slope-only): just scale unit draws by σz.
         M = reshape(σz, n, 1, ndraw, nchain) .* r
         return (;
-            Symbol(group) => DimArray(M, (Dim{:effect}(names), Dim{:group}(ranef.levels), draw_chain...)),
+            Symbol(group) => DimArray(M, (Dim{:effect}(names), Dim{_group_dim_name(group)}(ranef.levels), draw_chain...)),
             Symbol(group, "_sd") => DimArray(σz, (Dim{:effect}(names), draw_chain...)),
         )
     end

@@ -67,7 +67,7 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::Random
     effects_std = Array(std_layers[Symbol(group)])         # (effect,group,draw,chain)
     sds_std = Array(std_layers[Symbol(group, "_sd")])      # (effect,draw,chain)
     names = collect(dims(std_layers[Symbol(group)], :effect))
-    levels = collect(dims(std_layers[Symbol(group)], :group))
+    levels = collect(dims(std_layers[Symbol(group)], _group_dim_name(group)))
     ndraw, nchain = size(effects_std, 3), size(effects_std, 4)
     draw_chain = (Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain))
 
@@ -90,7 +90,7 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::Random
     end
 
     base = (;
-        Symbol(group) => DimArray(effects_raw, (Dim{:effect}(names), Dim{:group}(levels), draw_chain...)),
+        Symbol(group) => DimArray(effects_raw, (Dim{:effect}(names), Dim{_group_dim_name(group)}(levels), draw_chain...)),
         Symbol(group, "_sd") => DimArray(sds_raw, (Dim{:effect}(names), draw_chain...)),
     )
 

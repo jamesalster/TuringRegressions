@@ -736,11 +736,32 @@ end
     # DimensionalData integration rather than any recipe of ours — still worth a
     # smoke test, since a dim rename would break every plotting example in the docs.
     coefs = draws(normal_mod, :fixef)
-    @test_nowarn violin(coefs; scale=:width, show_median=true, side=:left)
-    @test_nowarn rainclouds(coefs)
-    @test_nowarn boxplot(coefs)
+    pos, vals, axis = categorical_layout(coefs)
+
+    # Each category must get its own parameter's draws and nothing else —
+    # `categorical_layout` exists because DimensionalData 0.30 gets this wrong.
+    @test length(pos) == length(vals) == length(coefs)
+    @test axis.xticks == (1:size(coefs, 1), string.(lookup(coefs, :fixef)))
+    for i in 1:size(coefs, 1)
+        @test vals[pos .== i] == parent(coefs)[i, :]
+    end
+
+    # Categorical dim second: same layout, transposed input.
+    @test categorical_layout(permutedims(coefs), 2) == (pos, vals, axis)
+    @test_throws ArgumentError categorical_layout(coefs, :nope)
+
+    @test_nowarn violin(pos, vals; axis, scale=:width, show_median=true, side=:left)
+    @test_nowarn rainclouds(pos, vals; axis)
+    @test_nowarn boxplot(pos, vals; axis)
     @test_nowarn scatter(coefs[fixef=At([:α, :σ])])
+    @test_nowarn scatter(parent(coefs[fixef=At([:α, :σ, :Cyl])]))
     @test_nowarn Makie.series(draws(normal_mod, :fixef; collapse=false)[fixef=At(:α)]'; linewidth=0.3)
+
+    # Readme's lineribbon example: linear predictor over a grid of one predictor.
+    grid = [fill(mean(mtcars.Cyl), 50) collect(range(extrema(mtcars.Disp)...; length=50))]
+    lp = posterior_predict(normal_mod, grid; type=:linpred)
+    @test size(lp, 1) == 50
+    @test_nowarn lineribbon(grid[:, 2], parent(lp)')
 end
 
 end # atleast(:standard)

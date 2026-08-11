@@ -40,7 +40,11 @@ Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 TuringRegressionsMakieExt = "Makie"
 
 [compat]
+# Pinned to 0.30: its Makie ext maps dims to axes, and the readme's plotting
+# examples are written against that mapping.
+DimensionalData = "0.30"
 DynamicPPL = "0.42"
+Makie = "0.24"
 FlexiChains = "0.6"
 PosteriorStats = "0.4.11"
 PrecompileTools = "1"

@@ -126,11 +126,15 @@ loo_compare(mod, robust_mod)       # rank fitted models by ELPD
 # Plots - using DimensionalData integration
 using GLMakie
 
-# Coefficients
+# Coefficients. `categorical_layout` flattens the draws into the (positions,
+# values) pair these plots want, with the parameter names as tick labels —
+# passing the DimArray straight in is broken on DimensionalData 0.30 (see Notes).
 coefs = draws(mod, :fixef)
-violin(coefs; scale=:width, show_median=true, side=:left)
-rainclouds(coefs)
-boxplot(coefs)
+pos, vals, axis = categorical_layout(coefs)
+
+violin(pos, vals; axis, scale=:width, show_median=true, side=:left)
+rainclouds(pos, vals; axis)
+boxplot(pos, vals; axis)
 
 # Trace plot
 coefs2 = draws(mod, :fixef; collapse=false)[fixef=At(:α)]  # one param: (iter, chain)
@@ -140,12 +144,14 @@ Makie.series(coefs2'; linewidth = 0.3) # NB the transpose
 pair = draws(mod, :fixef)[fixef=At([:α, :σ])]
 scatter(pair)
 triple = draws(mod, :fixef)[fixef=At([:α, :σ, :Cyl])]
-scatter(triple)
+scatter(parent(triple)) # NB `parent` — DimensionalData draws a 2D axis and drops the 3rd param
 
-# Ribbon plot: median line + interval bands over draws at each x
-x = 1:0.1:5
-y = randn(1000, length(x))  # rows = draws, one column per x
-lineribbon(x, y)
+# Ribbon plot: median line + interval bands over draws at each x.
+# Here, the linear predictor over a grid of Disp, holding Cyl at its mean.
+disp_grid = range(extrema(mtcars.Disp)...; length=50)
+grid = [fill(mean(mtcars.Cyl), 50) collect(disp_grid)]
+lp = posterior_predict(mod, grid; type=:linpred) # (row, iter)
+lineribbon(disp_grid, parent(lp)') # NB the transpose: rows = draws, one column per x
 
 #PP check provided as a function
 pp_check_hist(mod; bins=30)
@@ -203,6 +209,7 @@ pp_check_dens_overlay(mod)
 ### Plots
 * `lineribbon(x, y)`/`lineribbon!()` - Makie recipe: median line + interval ribbons, y = draws (rows) x x-positions (cols)
 * `pp_check_hist(model)` as well as `pp_check_dens()` and `pp_check_dens_overlay()` - Posterior predictive checks
+* `categorical_layout(dimarray)` - Flatten draws into `(positions, values, axis)` for `violin`/`boxplot`/`rainclouds`
 * See also the examples above for more quick plots
 
 ### Common Arguments
@@ -224,5 +231,7 @@ The original was hand-written but the random-effect implementation, tidying up a
 ## TODO
 
 Consider more prior customisability — currently priors are one-per-role (`RegressionPrior`) rather than `brms`-style per-term/per-coefficient.
+
+Plotting a `DimArray` of draws directly with `violin`/`boxplot`/`rainclouds` is broken on DimensionalData 0.30: each category is drawn from an interleaved mixture of every other one, and categories are positioned by the sum of their label's character codes, so parameter names land at arbitrary spacings. Both are reported upstream; `categorical_layout` works around them. `scatter` over three parameters needs `parent()` for the same reason — DimensionalData builds a 2D axis and silently drops the third (fixed on its `main`, unreleased at the time of writing).
 
 Note that the random-effect SDs sit above lme4/brms on the sleepstudy benchmark (intercept SD ≈ 29 vs lme4's 24.7). The LKJ shape is now settable via `default_prior(family; lkj_eta=...)`, but the default of 1.0 is flat on the standardised-scale correlation, which is the suspected cause.

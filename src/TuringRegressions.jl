@@ -98,6 +98,7 @@ export TuringRegression,
     pseudo_r2,
     lineribbon,
     lineribbon!,
+    categorical_layout,
     pp_check_dens,
     pp_check_dens_overlay,
     pp_check_hist

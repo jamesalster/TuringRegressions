@@ -92,8 +92,9 @@ function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)
     # Get variable name - handle simple and interaction terms
     variable = if term.rhs isa CategoricalTerm
         term.rhs.sym
-    else  # InteractionTerm like (item:subject)
-        Symbol(join([t.sym for t in term.rhs.terms], ":"))
+    else  # InteractionTerm like (item:subject) — "__"-joined so it's a plain typeable
+        # symbol (`:item__subject`), not one requiring `Symbol("item:subject")` to write.
+        Symbol(join([t.sym for t in term.rhs.terms], "__"))
     end
 
     group_values = _ranef_group_values(term.rhs, d)

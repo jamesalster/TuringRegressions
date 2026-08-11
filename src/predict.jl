@@ -11,7 +11,7 @@ Passing a function (e.g. median) first aggregates the draws with that function.
 # Arguments
 - `X` / `new_data`: predictions target (optional, uses fitted data if omitted)
 - `type`: Type of prediction (:posterior, :epred, :linpred)
-- `drop_warmup`: Number of warmup samples to drop from each chain
+- `drop_draws`: Number of warmup samples to drop from each chain
 - `n_draws`: Number of draws to keep (`Inf` for all available)
 - `collapse`: Whether to collapse chains into single dimension
 - `dropdims`: Whether to drop singleton dimensions (default: true)
@@ -25,6 +25,13 @@ end
 
 # Grouping info for random effects: fitted data reuses TR.modeldata.Z, a bare X matrix
 # carries no grouping info to reconstruct it from.
+function _check_predictor_cols(TR::TuringRegression, X::AbstractArray)
+    expected = size(TR.modeldata.predictors.X, 2)
+    size(X, 2) == expected || throw(ArgumentError(
+        "X has $(size(X, 2)) columns, fitted model expects $expected."
+    ))
+end
+
 function _resolve_z(TR::TuringRegression, X::AbstractArray)
     !has_random_effects(TR) && return nothing
     X === TR.modeldata.predictors.X && return TR.modeldata.Z
@@ -36,10 +43,12 @@ function _resolve_z(TR::TuringRegression, X::AbstractArray)
 end
 
 function posterior_predict(TR::TuringRegression, X::AbstractArray=TR.modeldata.predictors.X; type::Symbol=:posterior, kwargs...)
+    _check_predictor_cols(TR, X)
     return _predict_fn(type)(TR, X, _resolve_z(TR, X); kwargs...)
 end
 
 function posterior_predict(f::Function, TR::TuringRegression, X::AbstractArray=TR.modeldata.predictors.X; type::Symbol=:posterior, kwargs...)
+    _check_predictor_cols(TR, X)
     return _predict_fn(type)(f, TR, X, _resolve_z(TR, X); kwargs...)
 end
 
@@ -139,16 +148,8 @@ function epred(
     dropdims=true,
     kwargs...,
 ) where {T}
-    μ = linpred(TR, X, z; kwargs...)
-    invlink = let
-        if TR.link == identity
-            identity
-        elseif TR.link == logit
-            logistic
-        elseif TR.link == log
-            exp
-        end
-    end
+    μ = linpred(TR, X, z; dropdims=false, kwargs...)
+    invlink = get_invlink(T)
     epreds = invlink.(μ)
     return dropdims ? _drop_single_dims(epreds) : epreds
 end
@@ -168,24 +169,28 @@ function posterior_pred(
     dropdims=true,
     kwargs...,
 ) where {T}
-    epreds = epred(TR, X, z; kwargs...)
-    ndraws = size(epreds, 2)
+    epreds = epred(TR, X, z; dropdims=false, kwargs...)
     fixef_draws = draws(TR, :fixef; kwargs...)
+    # σ/ν/ϕ vary per draw (iter[,chain]), not per row. Indexing with a 1-element Vector (not a
+    # scalar) keeps the size-1 fixef dim in place, so Array(...) already comes out shaped
+    # (1, iter[, chain]) and broadcasts across rows instead of being shared by every row
+    # within a draw.
     if T == Normal
-        σ = vec(fixef_draws[fixef=At([:σ])])
-        posterior_preds = (rand(T(), ndraws) .* σ)' .+ epreds
+        σ = Array(fixef_draws[fixef=At([:σ])])
+        posterior_preds = epreds .+ randn(size(epreds)) .* σ
     elseif T == TDist
-        σ = vec(fixef_draws[fixef=At([:σ])])
-        ν = vec(fixef_draws[fixef=At([:ν])])
-        posterior_preds = (rand.(T.(ν)) .* σ)' .+ epreds
+        σ = Array(fixef_draws[fixef=At([:σ])])
+        ν = Array(fixef_draws[fixef=At([:ν])])
+        noise = rand.(TDist.(ν .* ones(size(epreds))))
+        posterior_preds = epreds .+ noise .* σ
     elseif T == Bernoulli
         posterior_preds = rand.(Bernoulli.(epreds))
     elseif T == Poisson
         posterior_preds = rand.(Poisson.(epreds))
     elseif T == NegativeBinomial
-        ϕ = vec(fixef_draws[fixef=At([:ϕ])])
+        ϕ = Array(fixef_draws[fixef=At([:ϕ])])
         # model.jl samples ϕ as inverse-dispersion (ϕ_inv = 1/ϕ feeds NegativeBinomial2's r); invert to match
-        posterior_preds = rand.(NegativeBinomial2.(epreds, (1 ./ ϕ)'))
+        posterior_preds = rand.(NegativeBinomial2.(epreds, 1 ./ (ϕ .* ones(size(epreds)))))
     end
     return dropdims ? _drop_single_dims(posterior_preds) : posterior_preds
 end

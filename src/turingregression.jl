@@ -18,7 +18,6 @@ mutable struct TuringRegression{T<:Distribution} <: RegressionModel
     link::Function
     modeldata::ModelData
     tf::Transform
-    modelcode::Expr
     samples::Union{Nothing,VNChain}
     parameters::Union{Nothing,DimStack}
 end
@@ -58,19 +57,33 @@ function turing_glm(formula::FormulaTerm,
     data::DataFrame,
     family::Type{<:Distribution};
     priors::RegressionPrior=default_prior(family),
-    weights::Union{Nothing, Vector{Float64}}=nothing)
+    weights::Union{Nothing, AbstractVector{<:Real}}=nothing)
 
     if family ∉ [Normal, TDist, Bernoulli, Poisson, NegativeBinomial]
         error("Family: $(string(family)) not supported.")
+    end
+
+    if !isnothing(weights)
+        length(weights) == size(data, 1) || throw(ArgumentError(
+            "weights has length $(length(weights)), data has $(size(data, 1)) rows."
+        ))
+        all(≥(0), weights) || throw(ArgumentError("weights must be non-negative."))
+        weights = convert(Vector{Float64}, weights)
     end
 
     # Get data arrays. `modeldata.f` is `formula` with schema/contrasts baked in —
     # stored on TR and reused by posterior_predict(TR, new_data::DataFrame) so grouping levels /
     # categorical contrasts are never re-derived from (possibly small/partial) new data.
     modeldata = extract_model_data(formula, data, weights)
+    if !has_intercept(modeldata) && has_fixed_effects(modeldata)
+        @warn "No-intercept formula: fixed-effect coefficients may be biased toward zero " *
+              "by the fixed-width fixed_effects prior. Consider adding an intercept, or " *
+              "widening the fixed_effects prior and checking the fit against an unregularised " *
+              "estimator (e.g. GLM.lm)."
+    end
     _, tf = standardise(modeldata, family)
 
-    model_obj, model_code = cached_construct_model(family, modeldata)
+    model_obj = construct_model(family, modeldata)
 
     return TuringRegression{family}(
         modeldata.f,
@@ -79,7 +92,6 @@ function turing_glm(formula::FormulaTerm,
         get_link(family),
         modeldata,
         tf,
-        model_code,
         nothing,
         nothing
     )
@@ -111,9 +123,15 @@ function turing_glm(
     if isempty(names)
         X_names = ntuple(i -> Symbol("X$i"), size(X, 2))
     else
+        length(names) == size(X, 2) || throw(ArgumentError(
+            "names has length $(length(names)), X has $(size(X, 2)) columns."
+        ))
         X_names = ntuple(i -> Symbol(names[i]), length(names))
     end
     df = DataFrame(X, collect(X_names))
+    :y ∈ propertynames(df) && throw(ArgumentError(
+        "a predictor is already named :y (clashes with the response column name)."
+    ))
     df.y = y
     formula = term(:y) ~ sum(term.(X_names))
     return turing_glm(formula, df, T; kwargs...)
@@ -130,6 +148,8 @@ function _print_prior(io::IO, pr::RegressionPrior, family::Type{<:Distribution},
     if has_ranef
         print(io, normal_style, "  Random Effect Variance: ")
         println(io, normal_style, clean_prior_string(string(pr.random_effect_variance)))
+        print(io, normal_style, "  Random Effect Correlation (LKJ η): ")
+        println(io, normal_style, pr.lkj_eta)
     end
 
     if family == TDist
@@ -160,34 +180,21 @@ function prior_summary(io::IO, TR::TuringRegression{T}) where {T}
 end
 prior_summary(TR::TuringRegression) = prior_summary(stdout, TR)
 
-"""
-    show(io, TR::TuringRegression)
-
-Print a summary of the model: family, formula, priors, and sample status.
-"""
-function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
-    header_style = crayon"bold underline"
-    label_style = crayon"bold !underline"
-    normal_style = crayon"reset"
-
-    println(io, header_style, "TuringRegression Model")
-
-    # Family
+# Family/formula lines, shared by the full show and model_summary's header.
+function _print_family_formula(io::IO, TR::TuringRegression{T}, label_style, normal_style) where {T}
     print(io, label_style, "Family: ")
     family_string = "$T (link: $(string(TR.link)))"
     println(io, normal_style, family_string)
 
-    # Formula
     print(io, label_style, "Formula: ")
     println(io, normal_style, string(TR.formula))
+end
 
-    _print_prior(io, TR.prior, T, label_style, normal_style; has_ranef=has_random_effects(TR))
-
-    # Observations
+# Observations/samples lines, shared by the full show and model_summary's header.
+function _print_obs_samples(io::IO, TR::TuringRegression, label_style, normal_style)
     print(io, label_style, "Observations: ")
     println(io, normal_style, size(TR.modeldata.predictors.X, 1))
 
-    # Samples
     print(io, label_style, "Samples: ")
     if isnothing(TR.samples)
         println(io, normal_style, "empty")
@@ -195,6 +202,22 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
         sz = size(TR.samples)  # FlexiChain: (iter, chain)
         println(io, normal_style, "$(sz[1] * sz[2]) samples across $(sz[2]) chains")
     end
+end
+
+"""
+    show(io, ::MIME"text/plain", TR::TuringRegression)
+
+Print a full summary of the model: family, formula, priors, and sample status.
+"""
+function Base.show(io::IO, ::MIME"text/plain", TR::TuringRegression{T}; warnings=true) where {T}
+    header_style = crayon"bold underline"
+    label_style = crayon"bold !underline"
+    normal_style = crayon"reset"
+
+    println(io, header_style, "TuringRegression Model")
+    _print_family_formula(io, TR, label_style, normal_style)
+    _print_prior(io, TR.prior, T, label_style, normal_style; has_ranef=has_random_effects(TR))
+    _print_obs_samples(io, TR, label_style, normal_style)
 
     if warnings
         println(io)
@@ -202,36 +225,35 @@ function Base.show(io::IO, TR::TuringRegression{T}; warnings=true) where {T}
     end
 end
 
+"""
+    show(io, TR::TuringRegression)
+
+Compact one-line display, used inside containers. Never warns.
+"""
+function Base.show(io::IO, TR::TuringRegression{T}) where {T}
+    status = isnothing(TR.samples) ? "not fitted" : "fitted"
+    print(io, "TuringRegression{$T}($(TR.formula), $status)")
+end
+
+"""
+    summary(TR::TuringRegression)
+
+One-line summary: family, formula, observations, samples (Base `summary` contract — returns a `String`).
+"""
+function Base.summary(io::IO, TR::TuringRegression{T}) where {T}
+    n = size(TR.modeldata.predictors.X, 1)
+    sample_status = if isnothing(TR.samples)
+        "empty"
+    else
+        sz = size(TR.samples)  # FlexiChain: (iter, chain)
+        "$(sz[1] * sz[2]) samples across $(sz[2]) chains"
+    end
+    print(io, "TuringRegression{$T}: $(TR.formula), n=$n, $sample_status")
+end
+
 
 #### Methods ####
 
-"""
-    fit!(TR::TuringRegression; sampler, parallel, samples, nchains, warmup, quiet, kwargs...)
-
-Run MCMC sampling to fit the model. Updates the model in-place. Kwargs are passed to Turing's `sample()`.
-
-Budget: both `samples` (kept draws) and `warmup` (adaptation draws, discarded) are
-TOTALS across all chains, split evenly over `nchains`. Division rounds UP (`cld`), so
-the actual per-chain count — and thus the total — is never less than requested: e.g.
-`samples=101, nchains=4` keeps 26/chain = 104 total. Warmup is sampled IN ADDITION to
-`samples` (not carved out of it): each chain runs `warmup/nchains` adaptation draws that
-are discarded, then `samples/nchains` kept draws. Warmup is never returned; `warmup=0`
-disables it. This is independent from `drop_warmup` in `draws`/`summary`, which trims
-already-kept draws at extraction time.
-
-# Arguments
-- `sampler`: MCMC algorithm (default: `NUTS()` w/ adtype auto-picked from `TR.modeldata` — `AutoReverseDiff(compile=true)` if random effects present, else `AutoForwardDiff()`; Pass `sampler=NUTS(;adtype=...)` to override.)
-- `parallel`: How to parallelize chains (default: MCMCThreads())
-- `samples`: Total kept draws across all chains, split over `nchains`, rounded up (default: 2000)
-- `nchains`: Number of chains (default: 4)
-- `warmup`: Total adaptation draws across all chains (IN ADDITION to `samples`), split over `nchains`, rounded up, discarded (default: equal to `samples`)
-- `quiet`: Suppress all sampler output — hides both the progress bar and any warnings (default: true). Set `false` for a live progress bar (a single aggregate bar across threaded chains); override with `progress=false` via kwargs.
-
-# Example
-```julia
-fit!(model, samples=4000, nchains=4)  # 1000 kept per chain
-```
-"""
 # Derives the grouping arrays (n_groups/group_idx/group_predictors) from ModelData.Z
 # once, then calls the model with its unpacked-argument signature. Shared with psis_loo
 # (comparison.jl), which needs the same conditioned model.
@@ -244,19 +266,74 @@ function _build_model_with_data(TR::TuringRegression)
     weights = something(md.weights, ones(length(md.y)))
     pr = TR.prior
     return TR.model(md.y, md.predictors.X, n_groups, group_idx, group_predictors, weights,
-        pr.intercept, pr.fixed_effects, pr.random_effect_variance, pr.auxiliary)
+        pr.intercept, pr.fixed_effects, pr.random_effect_variance, pr.auxiliary, pr.lkj_eta)
 end
 
+"""
+    fit!(TR::TuringRegression; sampler, parallel, samples, nchains, warmup, quiet, kwargs...)
+
+Run MCMC sampling to fit the model. Updates the model in-place. Unrecognised kwargs
+are passed straight to Turing's `sample()`.
+
+**`samples`/`warmup` diverge from Turing's `sample()` on purpose** — TOTALS across all
+chains (see Budget), not Turing's per-chain `N`/`nadapts`. Everything else (`sampler`,
+`parallel`, `nchains`, `initial_params`) matches Turing directly.
+
+Budget: both `samples` (kept draws) and `warmup` (adaptation draws, discarded) are
+TOTALS across all chains, split evenly over `nchains`. Division rounds UP (`cld`), so
+the actual per-chain count — and thus the total — is never less than requested: e.g.
+`samples=101, nchains=4` keeps 26/chain = 104 total. Warmup is sampled IN ADDITION to
+`samples` (not carved out of it): each chain runs `warmup/nchains` adaptation draws that
+are discarded, then `samples/nchains` kept draws. Warmup is never returned; `warmup=0`
+disables it. This is independent from `drop_draws` in `draws`/`summary`, which trims
+already-kept draws at extraction time.
+
+# Arguments
+- `sampler`: MCMC algorithm (default: `NUTS()` w/ adtype auto-picked from `TR.modeldata` — `AutoReverseDiff(compile=true)` if random effects present, else `AutoForwardDiff()`; Pass `sampler=NUTS(;adtype=...)` to override.)
+- `parallel`: How to parallelize chains (default: MCMCThreads())
+- `samples`: Total kept draws across all chains, split over `nchains`, rounded up (default: 2000)
+- `nchains`: Number of chains (default: 4)
+- `warmup`: Total adaptation draws across all chains (IN ADDITION to `samples`), split over `nchains`, rounded up, discarded (default: equal to `samples`)
+- `quiet`: Suppress all sampler output — hides both the progress bar and any warnings (default: true). Set `false` for a live progress bar (a single aggregate bar across threaded chains); override with `progress=false` via kwargs.
+- `initial_params`: NUTS init strategy (default: `InitFromPrior()` — samples init from the model's own prior, robust across families/param counts). Default `InitFromUniform` (blind uniform in unconstrained space) can fail `"find valid initial parameters in 1000 tries"` on wide/flat posteriors; override via kwargs if needed.
+
+# Example
+```julia
+fit!(model, samples=4000, nchains=4)  # 1000 kept per chain
+```
+"""
 function fit!(
     TR::TuringRegression{T};
     sampler=NUTS(; adtype=has_random_effects(TR.modeldata) ? AutoReverseDiff(; compile=true) : AutoForwardDiff()),
     parallel=MCMCThreads(),
     samples=2000,
+    initial_params=InitFromPrior(),
     nchains=4,
     warmup=samples,
     quiet=true,
     kwargs...,
 ) where {T}
+    # turing_glm eval's a freshly gensym'd model function; calling it in the same
+    # method body (e.g. `f() = fit!(turing_glm(...))`) would hit a world-age error
+    # without this — invokelatest routes around it, once per fit! call, not per
+    # NUTS step.
+    return Base.invokelatest(_fit!, TR; sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...)
+end
+
+const _TURING_SAMPLE_COLLISION_KWARGS = (:N, :nadapts, :discard_initial, :chain_type)
+
+function _fit!(
+    TR::TuringRegression{T};
+    sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...,
+) where {T}
+    # computed internally from samples/warmup/nchains — reject to avoid a silent collide
+    collided = filter(k -> haskey(kwargs, k), _TURING_SAMPLE_COLLISION_KWARGS)
+    isempty(collided) || throw(ArgumentError(
+        "fit! computes $(join(_TURING_SAMPLE_COLLISION_KWARGS, ", ")) internally from " *
+        "samples/warmup/nchains — got $(join(collided, ", ")) as a kwarg. Use " *
+        "samples/warmup/nchains instead."
+    ))
+
     model_with_data = _build_model_with_data(TR)
 
     # `samples` and `warmup` are totals across chains; split with ceil division so the
@@ -265,10 +342,12 @@ function fit!(
     warmup_per_chain = cld(warmup, nchains)
     # AbstractMCMC's `N` already means kept draws; `discard_initial` adds
     # `warmup_per_chain` steps on top (total steps sampled = per_chain + warmup_per_chain).
+    # Multi-chain `sample()` wants one init strategy per chain, not a single shared one.
+    initial_params_per_chain = fill(initial_params, nchains)
     if quiet
-        TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, kwargs...)
+        TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, progress=false, kwargs...)
     else
-        TR.samples = sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, progress=true, kwargs...)
+        TR.samples = sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, progress=true, kwargs...)
     end
 
     # Raw standardised-scale sampled params straight off the chain, stacked into

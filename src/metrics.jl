@@ -18,7 +18,7 @@ your model's predictions against actual outcomes. Returns results in a table.
 - `fun`: Optional function to apply across draws (e.g., mean, median, std), passed first matching `draws(f, TR, type)`
 - `metrics`: Vector of metric functions to calculate
 - `threshold`: Class threshold for binary classification (ignored for other models)
-- `drop_warmup`: Number of warmup samples to drop from each chain
+- `drop_draws`: Number of warmup samples to drop from each chain
 - `n_draws`: Number of draws to keep (`Inf` for all available)
 - `collapse`: Whether to collapse chains into single dimension
 - `dropdims`: Whether to drop singleton dimensions (default: true)
@@ -29,7 +29,7 @@ calculate_metrics(my_model, [accuracy, kappa])
 # collapse with function
 calculate_metrics(mean, my_model, [rmse, mae], threshold=0.6)
 # select draws
-calculate_metrics(my_model, [rmse, mae], drop_warmup=500, collapse=false)
+calculate_metrics(my_model, [rmse, mae], drop_draws=500, collapse=false)
 ```
 """
 function calculate_metrics(

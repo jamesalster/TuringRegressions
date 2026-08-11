@@ -4,8 +4,45 @@ module TuringRegressionsMakieExt
 using TuringRegressions
 using Makie
 using Statistics: mean, median, quantile
-import TuringRegressions: lineribbon, lineribbon!, conditional_dependency, pp_check_dens, pp_check_dens_overlay, pp_check_hist
-import TuringRegressions: TuringRegression, predictors, posterior_predict, has_random_effects
+import TuringRegressions: lineribbon, lineribbon!, pp_check_dens, pp_check_dens_overlay, pp_check_hist
+import TuringRegressions: categorical_layout
+import TuringRegressions: TuringRegression, posterior_predict
+using DimensionalData: AbstractDimMatrix, dims, otherdims, lookup
+
+"""
+    categorical_layout(A::AbstractDimMatrix, dim=1)
+
+Flatten a two-dimensional `DimArray` into `(positions, values, axis)` for Makie's
+categorical plots — `violin`, `boxplot`, `rainclouds` — which want a flat vector of
+positions alongside a flat vector of values rather than a matrix.
+
+`dim` picks the categorical dimension, by default the first (`:fixef` for
+`draws(TR, :fixef)`); the remaining dimension holds the draws. Categories are placed
+at `1:n` and `axis` carries their labels as tick marks, for the plot's `axis` keyword.
+
+Passing the `DimArray` in directly leans on DimensionalData's Makie integration, which
+as of DimensionalData 0.30 draws each category from an interleaved mixture of all the
+others and spaces them by the sum of their labels' character codes. Both are reported
+upstream; this helper sidesteps them.
+
+# Example
+```julia
+pos, vals, axis = categorical_layout(draws(TR, :fixef))
+violin(pos, vals; axis, scale=:width, show_median=true, side=:left)
+boxplot(pos, vals; axis)
+```
+"""
+function categorical_layout(A::AbstractDimMatrix, dim=1)
+    categorical_dim = dims(A, dim) # errors if `dim` is not one of A's dimensions
+    draw_dim = only(otherdims(A, categorical_dim))
+
+    labels = string.(lookup(A, categorical_dim))
+    # Draws must vary fastest so each block of `values` lines up with one label.
+    values = vec(parent(permutedims(A, (draw_dim, categorical_dim))))
+    positions = repeat(1:length(labels), inner=size(A, draw_dim))
+
+    return positions, values, (xticks=(1:length(labels), labels),)
+end
 
 """
     lineribbon(x, y; widths=[0.66, 0.95], colorscale="Greys", kwargs...)
@@ -73,52 +110,6 @@ end
 
 
 """
-    conditional_dependency(TR::TuringRegression, variable::Symbol; type=:posterior, kwargs...)
-
-Plot how predictions change when varying one variable while holding others at their means.  
-    Kwargs are passed to Makie.Figure(). 
-"""
-function conditional_dependency(
-    TR::TuringRegression, variable::Symbol; type=:posterior, kwargs...
-)
-    if has_random_effects(TR)
-        @warn "conditional_dependency only varies fixed effects; random effects are held at their fitted values, not marginalised or re-predicted."
-    end
-    N = 200
-    pp = predictors(TR, :fixef)
-    var_names = collect(dims(pp, :var))
-    id = findfirst(==(string(variable)), var_names)
-    isnothing(id) && throw(ArgumentError("variable $variable not among fixed effects $(var_names)"))
-    means = mean(pp; dims=1)
-    predict_range = range.(extrema(pp[var = At(string(variable))])..., N)
-
-    # make prediction_grid
-    predgrid = zeros(N, length(means))
-    for i in eachindex(means)
-        if i == id
-            predgrid[:, i] = collect(predict_range)
-        else
-            predgrid[:, i] = fill(means[i], N)
-        end
-    end
-
-    preds = posterior_predict(TR, predgrid; type=type)
-
-    # plot
-    fig = Makie.Figure(kwargs...)
-    ax = Makie.Axis(
-        fig[1, 1];
-        title="Conditional Dependency Plot",
-        subtitle="Other variables held at their mean",
-        ylabel="Outcome",
-        xlabel=string(variable),
-    )
-    lineribbon!(ax, predgrid[:, id], preds')
-    Makie.scatter!(ax, hcat(pp[:, id], outcome(TR)))
-    fig
-end
-
-"""
     pp_check_hist(TR::TuringRegression; bins=20, type=:posterior, kwargs...)
 
 Compare predicted vs observed values using histograms. Kwargs are passed to Makie.Figure().
@@ -127,8 +118,8 @@ function pp_check_hist(TR::TuringRegression; bins=20, type=:posterior, kwargs...
     preds = posterior_predict(median, TR; type=type)
     fig = Makie.Figure(kwargs...)
     ax = Makie.Axis(fig[1, 1]; title="Posterior Predictive Check", xlabel="Outcome")
-    Makie.hist!(ax, preds; label="Predictions", bins=bins)
-    Makie.hist!(ax, outcome(TR); label="Data", bins=bins)
+    Makie.hist!(ax, preds; label="Predictions", bins=bins, alpha=0.3)
+    Makie.hist!(ax, outcome(TR); label="Data", bins=bins, alpha=0.3)
     Makie.axislegend(ax; position=:rt)
     fig
 end
@@ -144,8 +135,8 @@ function pp_check_dens(
     preds = posterior_predict(median, TR; type=type)
     fig = Makie.Figure(kwargs...)
     ax = Makie.Axis(fig[1, 1]; title="Posterior Predictive Check", xlabel="Outcome")
-    Makie.density!(ax, preds; bandwidth=bandwidth, label="Predictions")
-    Makie.density!(ax, outcome(TR); bandwidth=bandwidth, label="Data")
+    Makie.density!(ax, preds; bandwidth=bandwidth, label="Predictions", alpha=0.3)
+    Makie.density!(ax, outcome(TR); bandwidth=bandwidth, label="Data", alpha=0.3)
     Makie.axislegend(ax; position=:rt)
     fig
 end

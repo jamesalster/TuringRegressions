@@ -18,6 +18,19 @@ function get_link(::Type{T}) where {T<:UnivariateDistribution}
     end
 end
 
+# Inverse of get_link — used by epred to back-transform the linear predictor.
+function get_invlink(::Type{T}) where {T<:UnivariateDistribution}
+    if T ∈ [Normal, TDist]
+        return identity
+    elseif T == Bernoulli
+        return logistic
+    elseif T ∈ [Poisson, NegativeBinomial]
+        return exp
+    else
+        error("Distribution $T unknown, no inverse link defined.")
+    end
+end
+
 # Stan-style negative binomial parameterisation, taken from TuringGLM.jl
 function NegativeBinomial2(μ::T, ϕ::T) where {T<:Real}
     # clamp both bounds: unclamped upper bound lets extreme HMC proposals (μ

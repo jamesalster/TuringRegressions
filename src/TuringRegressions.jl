@@ -22,32 +22,33 @@ import StatsAPI: RegressionModel
 using Turing
 using ReverseDiff
 using PrettyTables
+using Crayons: @crayon_str
 using MixedModels
 using Random
 using StatisticalMeasures
 using PosteriorStats: loo, compare
 using MCMCDiagnosticTools
 using FlexiChains: FlexiChains, VNChain
-using DynamicPPL: getsym
+using DynamicPPL: getsym, InitFromPrior
 
 using MacroTools: prettify
 using Suppressor: @suppress
+using Logging: Logging, NullLogger
 import StatsBase: StatsBase, mean, std, cov, CoefTable, ZScoreTransform, fit, transform
 using DataFrames: DataFrame
 using Tables: columntable
 using LinearAlgebra: I, dot, Symmetric, diagm, diag, Diagonal
 using CategoricalArrays: categorical
 using CategoricalDistributions: UnivariateFinite
-using MixedModels: _ranef_refs
 using PrecompileTools: @compile_workload
 
 include("prior.jl")
 include("formula_handlers.jl")
-include("transform.jl")
+include("standardise.jl")
+include("unstandardise.jl")
 include("reshape.jl")
 include("turingregression.jl")
 include("model.jl")
-include("model_cache.jl")
 include("utils.jl")
 include("parametermethods.jl")
 include("predict.jl")
@@ -58,31 +59,32 @@ include("plots.jl")
 include("statsapi.jl")
 
 # Warms the ~25s generic Turing/DynamicPPL/AbstractMCMC/StatsModels compile so the
-# first user `turing_glm`+`fit!` doesn't pay it. `turing_glm` eval's a fresh model
-# function at runtime; calling it and `fit!` in the same function body hits a
-# world-age gap (see bench/sleepstudy_bench.jl), so `fit!` goes through
-# `Base.invokelatest`.
+# first user `turing_glm`+`fit!` doesn't pay it. `fit!` routes through
+# `Base.invokelatest` internally (src/turingregression.jl), so no world-age gap here.
 #
 # Ranef `fit!`/`sample()` NOT precompiled: its default adtype (AutoReverseDiff)
 # segfaults on package-image reload — a Turing/DynamicPPL serialization
 # limitation, not fixable here. Ranef models still benefit substantially from
-# the shared generic slice below (see bench/BENCHLOG.md).
+# the shared generic slice below.
 @compile_workload begin
     df = DataFrame(y=[1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
         x=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
         g=["a", "a", "a", "b", "b", "b"])
-    @suppress begin
-        m1 = turing_glm(@formula(y ~ 1 + x), df, Normal)
-        Base.invokelatest(fit!, m1; samples=1, warmup=1, nchains=1, quiet=true)
+    Logging.with_logger(NullLogger()) do
+        @suppress begin
+            m1 = turing_glm(@formula(y ~ 1 + x), df, Normal)
+            fit!(m1; samples=1, warmup=1, nchains=2, quiet=true)
+        end
     end
 end
 
 export TuringRegression,
     turing_glm,
     model_warnings,
+    model_summary,
     draws,
     outcome,
-    predictors,
+    get_fixef_predictors,
     outcome_as_distribution,
     posterior_predict,
     psis_loo,
@@ -92,10 +94,11 @@ export TuringRegression,
     default_prior,
     prior_summary,
     modelcode,
+    set_model_code!,
     pseudo_r2,
     lineribbon,
     lineribbon!,
-    conditional_dependency,
+    categorical_layout,
     pp_check_dens,
     pp_check_dens_overlay,
     pp_check_hist

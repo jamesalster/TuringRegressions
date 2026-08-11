@@ -36,7 +36,7 @@ function _diagnostics_table(arr, labels, funs, func_names_all, quantiles)
 end
 
 """
-    summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_warmup=nothing, kwargs...)
+    model_summary(io::IO, TR::TuringRegression; funs=[median, std], quantiles=[0.025, 0.975], return_table=false, drop_draws=nothing, kwargs...)
 
 Display formatted summary table of model parameters.
 
@@ -46,17 +46,17 @@ Display formatted summary table of model parameters.
 - `funs`: Summary functions to apply (default: [median, std])
 - `quantiles`: Quantiles to compute (default: [0.025, 0.975] for 95% CI)
 - `return_table`: Whether to return the summary table as NamedTuple
-- `drop_warmup`: Number of extra warmup draws to drop, on top of what `fit!` already discarded during adaptation (default: 0 — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
+- `drop_draws`: Number of extra warmup draws to drop, on top of what `fit!` already discarded during adaptation (default: 0 — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
 - `show_metrics`: Whether to compute and display the prediction metrics table (default: false)
 - `kwargs...`: Additional arguments passed to `draws`/`default_metrics` (e.g. `n_draws`)
 """
-function Base.summary(
+function model_summary(
     io::IO,
     TR::TuringRegression;
     funs=[mean, std],
     quantiles=[0.025, 0.975],
     return_table=false,
-    drop_warmup=nothing,
+    drop_draws=nothing,
     show_metrics=false,
     kwargs...,
 )
@@ -67,9 +67,9 @@ function Base.summary(
         Symbol.(funs), [Symbol("q$(round(q*100; digits=1))") for q in quantiles]
     )
 
-    drop_warmup = something(drop_warmup, 0)
+    drop_draws = something(drop_draws, 0)
 
-    fixef_draws = draws(TR, :fixef; drop_warmup=drop_warmup, collapse=false, kwargs...)
+    fixef_draws = draws(TR, :fixef; drop_draws=drop_draws, collapse=false, kwargs...)
     param_names = collect(dims(fixef_draws, :fixef))
     chain_info = _diagnostics_table(fixef_draws, param_names, funs, func_names_all, quantiles)
 
@@ -78,13 +78,17 @@ function Base.summary(
     #metrics
     if show_metrics
         metric_tabs = map(
-            f -> default_metrics(f, TR; drop_warmup=drop_warmup, kwargs...), funs_all
+            f -> default_metrics(f, TR; drop_draws=drop_draws, kwargs...), funs_all
         )
         metric_tab = hcat(metric_tabs...)
     end
 
-    # show
-    show(io, TR; warnings=false)
+    # header: family/formula/observations/samples, no prior — same content as the full
+    # show(io, MIME"text/plain", TR) minus the prior block
+    label_style = crayon"bold !underline"
+    normal_style = crayon"reset"
+    _print_family_formula(io, TR, label_style, normal_style)
+    _print_obs_samples(io, TR, label_style, normal_style)
     println(io)
     pretty_table(
         io,
@@ -94,20 +98,14 @@ function Base.summary(
         row_labels=param_names,
         stubhead_label="Parameter",
         highlighters=make_highlighters(ncols),
-        formatters=[
-            fmt__printf("%5.2f", collect(1:(ncols - 5))),
-            fmt__printf("%5.2g", [ncols - 4]),
-            fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
-            fmt__printf("%5.3f", [ncols - 1]),
-            fmt__printf("%5.3f", [ncols]),
-        ],
+        formatters=_stat_formatters(ncols),
         default_options...,
     )
     if has_random_effects(TR)
         for re in TR.modeldata.Z
             group = re.variable
 
-            level_draws = draws(TR, group; drop_warmup=drop_warmup, collapse=false, kwargs...)
+            level_draws = draws(TR, group; drop_draws=drop_draws, collapse=false, kwargs...)
             level_effect_names = collect(dims(level_draws, :effect))
             levels = collect(dims(level_draws, :group))
             for (ei, eff) in enumerate(level_effect_names)
@@ -120,18 +118,12 @@ function Base.summary(
                     row_labels=levels,
                     stubhead_label="Level",
                     highlighters=make_highlighters(ncols),
-                    formatters=[
-                        fmt__printf("%5.2f", collect(1:(ncols - 5))),
-                        fmt__printf("%5.2g", [ncols - 4]),
-                        fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
-                        fmt__printf("%5.3f", [ncols - 1]),
-                        fmt__printf("%5.3f", [ncols]),
-                    ],
+                    formatters=_stat_formatters(ncols),
                     default_options...,
                 )
             end
 
-            sd_draws = draws(TR, Symbol(group, "_sd"); drop_warmup=drop_warmup, collapse=false, kwargs...)
+            sd_draws = draws(TR, Symbol(group, "_sd"); drop_draws=drop_draws, collapse=false, kwargs...)
             effect_names = collect(dims(sd_draws, :effect))
             ranef_info = _diagnostics_table(sd_draws, effect_names, funs, func_names_all, quantiles)
             pretty_table(
@@ -142,19 +134,13 @@ function Base.summary(
                 row_labels=effect_names,
                 stubhead_label="Effect",
                 highlighters=make_highlighters(ncols),
-                formatters=[
-                    fmt__printf("%5.2f", collect(1:(ncols - 5))),
-                    fmt__printf("%5.2g", [ncols - 4]),
-                    fmt__printf("%5.0f", [ncols - 2, ncols - 3]),
-                    fmt__printf("%5.3f", [ncols - 1]),
-                    fmt__printf("%5.3f", [ncols]),
-                ],
+                formatters=_stat_formatters(ncols),
                 default_options...,
             )
 
             corr_sym = Symbol(group, "_corr")
             if corr_sym ∈ propertynames(TR.parameters)
-                corr_point = draws(mean, TR, corr_sym; drop_warmup=drop_warmup, kwargs...)
+                corr_point = draws(mean, TR, corr_sym; drop_draws=drop_draws, kwargs...)
                 pretty_table(
                     io,
                     Matrix(corr_point);
@@ -189,9 +175,7 @@ function Base.summary(
 end
 
 # Catch-all method for non-IO calls
-function Base.summary(TR::TuringRegression, args...; kwargs...)
-    summary(stdout, TR, args...; kwargs...)
-end
+model_summary(TR::TuringRegression, args...; kwargs...) = model_summary(stdout, TR, args...; kwargs...)
 
 function model_warnings(chain_info)
     #warnings
@@ -253,6 +237,16 @@ function model_warnings(TR::TuringRegression)
     model_warnings((; std=stds, mcse=mcses, ess_bulk=ess_bulks, ess_tail=ess_tails, rhat=rhats))
 end
 
+# Column layout: [funs..., quantiles..., mcse, ess_bulk, ess_tail, rhat]
+function _stat_formatters(ncols)
+    return [
+        fmt__printf("%5.2f", collect(1:(ncols - 4))),
+        fmt__printf("%5.2g", [ncols - 3]),
+        fmt__printf("%5.0f", [ncols - 2, ncols - 1]),
+        fmt__printf("%5.3f", [ncols]),
+    ]
+end
+
 # Highlighters
 function make_highlighters(ncols)
     return [
@@ -275,5 +269,7 @@ end
 # Default table options
 const default_options = (;
     style=TextTableStyle(; column_label=crayon"bold", stubhead_label=crayon"bold"),
-    fit_table_in_display_horizontally=false,
+    # true = crop overflowing columns with `⋯` rather than letting the terminal wrap the
+    # row onto the next line, which makes a wide summary unreadable
+    fit_table_in_display_horizontally=true,
 )

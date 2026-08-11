@@ -242,7 +242,9 @@ function build_model_expr(family::Type{<:Distribution}, modeldata::ModelData)
     # typeof(f), so reusing "turing_regression" for every model let Turing's
     # internal AD/dual-number caches (keyed on that shared type) leak between
     # models with different parameter counts, causing BoundsErrors during sampling.
-    fname = gensym(:turing_regression)
+    # PID suffix because gensym's counter restarts each session: the precompile workload's
+    # model name regenerates verbatim at runtime and overwrites the precompiled method.
+    fname = Symbol(gensym(:turing_regression), :_, getpid())
     # Priors passed as separate runtime args, not baked into the Expr or bundled
     # into a struct — keeps model shape prior-independent for a (currently unused)
     # future cache keyed on that shape.

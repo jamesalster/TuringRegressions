@@ -1,3 +1,11 @@
+# How to run (from the package root):
+#   julia --project=. -e 'using Pkg; Pkg.test()'                       # standard, ~5 min
+#   TR_TEST_LEVEL=fast julia --project=. -e 'using Pkg; Pkg.test()'    # ~2 min
+#   TR_TEST_LEVEL=benchmarks julia --project=. -e 'using Pkg; Pkg.test()'  # ~8 min
+# Always via Pkg.test(), never `julia --project=. test/runtests.jl` — Pkg.test()
+# resolves the test deps in an isolated env, which is what CI and users get.
+# Levels are defined below.
+
 using TuringRegressions
 using Test
 using RDatasets

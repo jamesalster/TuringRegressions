@@ -120,7 +120,7 @@ id|date|cause|fix
 
 T34|.|Ranef corr prior (LKJ η) now user-settable via `RegressionPrior.lkj_eta` / `default_prior(family; lkj_eta=...)` — closed. Remaining, wider question: let user pass more specific priors generally (brms-style — per-term/per-coef, not just current one-prior-per-role `RegressionPrior`)|C2,V10,V26
 
-T56|.|Packaging blockers — registry auto-merge fails without these. Add `LICENSE` (none in repo). Add a `julia` compat entry. Add `[compat]` for the ~17 deps lacking one (only 9 of 26 have bounds; the `Makie` weakdep needs one too) — INCLUDING the newly added `Crayons`, which has no bound yet. Also consider: do we need Tables for columntable?|V17
+T56|~|Packaging blockers — registry auto-merge fails without these. Add `LICENSE` (none in repo). Add a `julia` compat entry. Add `[compat]` for the ~17 deps lacking one (only 9 of 26 have bounds; the `Makie` weakdep needs one too) — INCLUDING the newly added `Crayons`, which has no bound yet. Also consider: do we need Tables for columntable?|V17
 
 T57|.|CI. No `.github/workflows` at all. Add a test workflow (Julia version × OS matrix, `julia-actions/setup-julia` + `julia-actions/julia-runtest`) plus coverage upload. NB a full `Pkg.test()` is 20-30+ min of NUTS (C10), so run `TR_TEST_LEVEL=fast` on PRs, `standard` (the default) on main pushes, and `benchmarks` on nightly only. Tests must run via `Pkg.test()`, not direct `julia test/runtests.jl` (V17)|C10,V17
 

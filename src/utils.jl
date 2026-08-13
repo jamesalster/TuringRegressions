@@ -35,7 +35,7 @@ end
 function NegativeBinomial2(μ::T, ϕ::T) where {T<:Real}
     # clamp both bounds: unclamped upper bound lets extreme HMC proposals (μ
     # underflowing to 0) push p exactly to 1, a non-differentiable kink in
-    # max() that gives NaN gradients and crashes NUTS (see SPEC.md B2)
+    # max() that gives NaN gradients and crashes NUTS 
     p = clamp(1 / (1 + μ / ϕ), 1e-6, 1 - 1e-6)
     r = ϕ
     return NegativeBinomial(r, p)

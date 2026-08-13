@@ -1,23 +1,20 @@
 
 #### Affine standardisation, computed once outside the model
 # Why: without it we couldn't reproduce brms/GLM/lme4 numbers, and it samples faster.
-# Constants of the data, not the parameters, so they're computed here rather than
-# redone every leapfrog step. Draws come back std-scale, mapped back in unstandardise.jl.
-# ZScoreTransform also guards zero-variance columns (scale→1.0) for free.
+# Constants of the data, not the parameters, so they're computed here outside the model.
+# Draws come back std-scale, mapped back in unstandardise.jl.
 
 struct Transform
     fixef::ZScoreTransform
     y::ZScoreTransform              # center=scale=false when family doesn't scale y
     ranef::Vector{ZScoreTransform}  # aligned with ModelData.Z
-    # Unpacked: ZScoreTransform leaves .mean/.scale EMPTY when center/scale=false, so
-    # store identity values instead of branching at every use site.
+    # ZScoreTransform leaves .mean/.scale EMPTY when center/scale=false, so store values
     y_mean::Float64                 # 0.0 when family doesn't scale y
     y_scale::Float64                # 1.0 when family doesn't scale y
 end
 
 # Single source of truth for family-specific behaviour, consumed by every pass.
-#   scales_y  — is y standardised? Identity-link families only; rescaling counts or
-#               0/1 outcomes would break their support.
+#   scales_y  — is y standardised? Identity-link families only;
 #   aux_roots — extra sampled scalars (dispersion / shape), in output order
 struct FamilySpec
     scales_y::Bool
@@ -47,7 +44,7 @@ function compute_transform(md::ModelData, family::Type{<:Distribution})
     return Transform(fixef, y, ranef, y_mean, y_scale)
 end
 
-# fn is StatsBase.transform or StatsBase.reconstruct — same traversal either direction.
+# fn is StatsBase.transform or StatsBase.reconstruct
 function apply_transform(fn::Function, tf::Transform, md::ModelData)
     predictors = Predictors(md.predictors.has_intercept, fn(tf.fixef, md.predictors.X), md.predictors.X_names)
     Z = [

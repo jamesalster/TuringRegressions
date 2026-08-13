@@ -8,11 +8,8 @@ using Reexport
 @reexport using Distributions
 @reexport using MixedModels: @formula
 
-using StatsModels
 import StatsAPI: RegressionModel
-
-# StatsAPI marks these `public`, not `export`, so name them explicitly. Must be `import`
-# not `using` — extending a function in statsapi.jl requires `import`.
+# StatsAPI marks these `public`, not `export`, so name them explicitly.
 @reexport import StatsAPI:
     coef, coefnames, coeftable, confint, vcov, stderror, nobs, isfitted, weights,
     islinear, fitted, response, responsename, meanresponse, modelmatrix, residuals,
@@ -21,23 +18,26 @@ import StatsAPI: RegressionModel
     mss, rss, nulldeviance, nullloglikelihood, aic, aicc, bic, r2, adjr2
 using Turing
 using ReverseDiff
-using PrettyTables
-using Crayons: @crayon_str
-using MixedModels
-using Random
-using PosteriorStats: loo, compare
 using MCMCDiagnosticTools
 using FlexiChains: FlexiChains, VNChain
 using DynamicPPL: getsym, InitFromPrior
+using PosteriorStats: loo, compare
 
-using MacroTools: prettify
+using Random
+using Tables: columntable
+using DataFrames: DataFrame
+import StatsBase: StatsBase, mean, std, cov, CoefTable, ZScoreTransform, fit, transform
+using LinearAlgebra: I, dot, Symmetric, diagm, diag, Diagonal
+using StatsModels
+using MixedModels
+
 using Suppressor: @suppress
 using Logging: Logging, NullLogger
-import StatsBase: StatsBase, mean, std, cov, CoefTable, ZScoreTransform, fit, transform
-using DataFrames: DataFrame
-using Tables: columntable
-using LinearAlgebra: I, dot, Symmetric, diagm, diag, Diagonal
 using PrecompileTools: @compile_workload
+
+using MacroTools: prettify
+using PrettyTables
+using Crayons: @crayon_str
 
 include("prior.jl")
 include("formula_handlers.jl")
@@ -54,14 +54,7 @@ include("comparison.jl")
 include("plots.jl")
 include("statsapi.jl")
 
-# Warms the ~25s generic Turing/DynamicPPL/AbstractMCMC/StatsModels compile so the
-# first user `turing_glm`+`fit!` doesn't pay it. `fit!` routes through
-# `Base.invokelatest` internally (src/turingregression.jl), so no world-age gap here.
-#
-# Ranef `fit!`/`sample()` NOT precompiled: its default adtype (AutoReverseDiff)
-# segfaults on package-image reload — a Turing/DynamicPPL serialization
-# limitation, not fixable here. Ranef models still benefit substantially from
-# the shared generic slice below.
+# Warms the ~25s generic Turing compile to improve time-to-first fit
 @compile_workload begin
     df = DataFrame(y=[1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
         x=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
@@ -94,8 +87,6 @@ export TuringRegression,
     pp_check_dens,
     pp_check_dens_overlay,
     pp_check_hist
-# StatsAPI RegressionModel interface (src/statsapi.jl) re-exported via @reexport above —
-# includes both the implemented point-estimate methods and the ones that raise a clear
-# ArgumentError (no Bayesian analogue / no MLE statistic) instead of a bare MethodError.
+# StatsAPI RegressionModel interface (src/statsapi.jl) re-exported via @reexport above
 
 end

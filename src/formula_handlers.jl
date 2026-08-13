@@ -1,15 +1,10 @@
 
-#Data structure to hold model information
+#Data structures to hold model information
 
 struct Predictors
     has_intercept::Bool
-    X::Matrix{Float64}
-    X_names::Union{Nothing,Vector{String}} #TODO would love to cut this
-
-    # Coerce to Matrix{Float64} at construction — the NUTS hot path needs a concrete
-    # type; any AbstractMatrix in (Int, view, transpose, ...) works the same, just
-    # converted once here instead of leaking an abstract eltype into the model.
-    Predictors(has_intercept, X, X_names) = new(has_intercept, convert(Matrix{Float64}, X), X_names)
+    X::Matrix{Float64} # enforce type for stability later
+    X_names::Union{Nothing,Vector{String}} 
 end
 struct RandomEffect
     variable::Symbol           # grouping variable (e.g., :subject)
@@ -19,7 +14,7 @@ struct RandomEffect
 end
 
 struct ModelData
-    f::FormulaTerm
+    f::FormulaTerm # with schema applied so transformations, dummy vars etc. can be re-applied identically to new model data
     y::AbstractVector
     predictors::Predictors
     Z::Vector{RandomEffect}

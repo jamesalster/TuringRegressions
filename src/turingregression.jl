@@ -8,7 +8,10 @@ Stores the formula, data, priors, and MCMC samples. The type parameter
 - `formula`: The regression formula
 - `model`: Compiled Turing model function
 - `prior`: Prior distributions for parameters
-- `samples`: MCMC chains (nothing until `fit!` is called)
+- `link`: The model's link function
+- `modeldata`: A ModelData object containing the model data
+- `tf`: the transform that standardises the model data
+- `samples`: the MCMC FlexiChain object (nothing until `fit!` is called)
 - `parameters`: Standardized parameter draws
 """
 mutable struct TuringRegression{T<:Distribution} <: RegressionModel
@@ -31,13 +34,13 @@ is_weighted(TR::TuringRegression) = is_weighted(TR.modeldata)
 """
     turing_glm(formula, data, family; priors, weights)
 
-Fit a Bayesian regression model.
+Construct a Bayesian regression model with TuringRegressions.
 
-Data is automatically standardized internally (mean 0, sd 1) for sampling
-efficiency. **Priors are specified on this STANDARDISED scale, not the
+**NB: Priors are specified on this STANDARDISED scale, not the
 original data's units** — `Normal(0, 2)` for `fixed_effects` means 2 std
-devs of the (standardised) predictor, not 2 units of the raw data. Inspect
-the priors in force with `TR.prior`, `prior_summary(TR)`, or `show(TR)`.
+devs of the (standardised) predictor, not 2 units of the raw data. 
+
+Inspect the priors with `prior_summary(TR)`
 Inspect the generated Turing model code with `modelcode(TR)`.
 
 # Arguments
@@ -71,9 +74,6 @@ function turing_glm(formula::FormulaTerm,
         weights = convert(Vector{Float64}, weights)
     end
 
-    # Get data arrays. `modeldata.f` is `formula` with schema/contrasts baked in —
-    # stored on TR and reused by posterior_predict(TR, new_data::DataFrame) so grouping levels /
-    # categorical contrasts are never re-derived from (possibly small/partial) new data.
     modeldata = extract_model_data(formula, data, weights)
     if !has_intercept(modeldata) && has_fixed_effects(modeldata)
         @warn "No-intercept formula: fixed-effect coefficients may be biased toward zero " *
@@ -100,7 +100,7 @@ end
 """
     turing_glm(y, X, family; names, kwargs...)
 
-Fit a model using raw arrays instead of a formula.
+Fit a model using raw arrays instead of a formula. Fixed effects only.
 
 # Arguments
 - `y`: Response vector
@@ -137,8 +137,7 @@ function turing_glm(
     return turing_glm(formula, df, T; kwargs...)
 end
 
-# Shared by Base.show(io,TR) and prior_summary(TR) — one place that knows how to
-# print a RegressionPrior against a given family (label_style/normal_style: crayons).
+# Shared by Base.show(io,TR) and prior_summary(TR)
 function _print_prior(io::IO, pr::RegressionPrior, family::Type{<:Distribution}, label_style, normal_style; has_ranef::Bool=true)
     println(io, label_style, "Prior (standardised scale):")
     print(io, normal_style, "  Intercept: ")
@@ -170,9 +169,7 @@ end
     prior_summary(TR::TuringRegression)
     prior_summary(io::IO, TR::TuringRegression)
 
-Print `TR.prior` on its own — same block `show(TR)` prints, without formula/samples/
-warnings. Priors are always on the STANDARDISED scale (mean 0, sd 1 predictors),
-regardless of the original data's units — see `turing_glm` docstring.
+Print `TR.prior` on its own.
 """
 function prior_summary(io::IO, TR::TuringRegression{T}) where {T}
     _print_prior(io, TR.prior, T, crayon"bold !underline", crayon"reset"; has_ranef=has_random_effects(TR))
@@ -238,7 +235,7 @@ end
 """
     summary(TR::TuringRegression)
 
-One-line summary: family, formula, observations, samples (Base `summary` contract — returns a `String`).
+One-line string summary: family, formula, observations, samples.
 """
 function Base.summary(io::IO, TR::TuringRegression{T}) where {T}
     n = size(TR.modeldata.predictors.X, 1)
@@ -275,27 +272,23 @@ end
 Run MCMC sampling to fit the model. Updates the model in-place. Unrecognised kwargs
 are passed straight to Turing's `sample()`.
 
-**`samples`/`warmup` diverge from Turing's `sample()` on purpose** — TOTALS across all
-chains (see Budget), not Turing's per-chain `N`/`nadapts`. Everything else (`sampler`,
+**`samples`/`warmup` diverge from Turing's `sample()` on purpose** — 'samples' are totals across all
+chains, not Turing's per-chain `N`/`nadapts`. Everything else (`sampler`,
 `parallel`, `nchains`, `initial_params`) matches Turing directly.
 
 Budget: both `samples` (kept draws) and `warmup` (adaptation draws, discarded) are
-TOTALS across all chains, split evenly over `nchains`. Division rounds UP (`cld`), so
-the actual per-chain count — and thus the total — is never less than requested: e.g.
-`samples=101, nchains=4` keeps 26/chain = 104 total. Warmup is sampled IN ADDITION to
-`samples` (not carved out of it): each chain runs `warmup/nchains` adaptation draws that
-are discarded, then `samples/nchains` kept draws. Warmup is never returned; `warmup=0`
-disables it. This is independent from `drop_draws` in `draws`/`summary`, which trims
-already-kept draws at extraction time.
+TOTALS across all chains, split evenly over `nchains`. Division rounds UP (`cld`).
+Warmup is sampled in addition to `samples` (not carved out of it). Use `drop_draws` in `draws`/`summary`, 
+to trim draws at extraction time.
 
 # Arguments
-- `sampler`: MCMC algorithm (default: `NUTS()` w/ adtype auto-picked from `TR.modeldata` — `AutoReverseDiff(compile=true)` if random effects present, else `AutoForwardDiff()`; Pass `sampler=NUTS(;adtype=...)` to override.)
-- `parallel`: How to parallelize chains (default: MCMCThreads())
 - `samples`: Total kept draws across all chains, split over `nchains`, rounded up (default: 2000)
 - `nchains`: Number of chains (default: 4)
 - `warmup`: Total adaptation draws across all chains (IN ADDITION to `samples`), split over `nchains`, rounded up, discarded (default: equal to `samples`)
+- `sampler`: MCMC algorithm (default: `NUTS()` w/ adtype auto-picked from `TR.modeldata` — `AutoReverseDiff(compile=true)` if random effects present, else `AutoForwardDiff()`; Pass `sampler=NUTS(;adtype=...)` to override.)
+- `parallel`: How to parallelize chains (default: MCMCThreads())
 - `quiet`: Suppress all sampler output — hides both the progress bar and any warnings (default: true). Set `false` for a live progress bar (a single aggregate bar across threaded chains); override with `progress=false` via kwargs.
-- `initial_params`: NUTS init strategy (default: `InitFromPrior()` — samples init from the model's own prior, robust across families/param counts). Default `InitFromUniform` (blind uniform in unconstrained space) can fail `"find valid initial parameters in 1000 tries"` on wide/flat posteriors; override via kwargs if needed.
+- `initial_params`: NUTS init strategy (default: `InitFromPrior()` — samples init from the model's own prior, robust across families/param counts). 
 
 # Example
 ```julia
@@ -313,10 +306,9 @@ function fit!(
     quiet=true,
     kwargs...,
 ) where {T}
-    # turing_glm eval's a freshly gensym'd model function; calling it in the same
+    # turing_glm evals a freshly gensym'd model function; calling it in the same
     # method body (e.g. `f() = fit!(turing_glm(...))`) would hit a world-age error
-    # without this — invokelatest routes around it, once per fit! call, not per
-    # NUTS step.
+    # without this — invokelatest routes around it
     return Base.invokelatest(_fit!, TR; sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...)
 end
 
@@ -326,7 +318,7 @@ function _fit!(
     TR::TuringRegression{T};
     sampler, parallel, samples, initial_params, nchains, warmup, quiet, kwargs...,
 ) where {T}
-    # computed internally from samples/warmup/nchains — reject to avoid a silent collide
+    # reject turing sampling args to avoid a silent collide
     collided = filter(k -> haskey(kwargs, k), _TURING_SAMPLE_COLLISION_KWARGS)
     isempty(collided) || throw(ArgumentError(
         "fit! computes $(join(_TURING_SAMPLE_COLLISION_KWARGS, ", ")) internally from " *
@@ -334,16 +326,16 @@ function _fit!(
         "samples/warmup/nchains instead."
     ))
 
+    # the Turing model object
     model_with_data = _build_model_with_data(TR)
 
-    # `samples` and `warmup` are totals across chains; split with ceil division so the
-    # realised count is never below what was asked (round up = add, not subtract).
+    # use ceil division so sample count is never below requested
     per_chain = cld(samples, nchains)
     warmup_per_chain = cld(warmup, nchains)
-    # AbstractMCMC's `N` already means kept draws; `discard_initial` adds
-    # `warmup_per_chain` steps on top (total steps sampled = per_chain + warmup_per_chain).
     # Multi-chain `sample()` wants one init strategy per chain, not a single shared one.
     initial_params_per_chain = fill(initial_params, nchains)
+    # AbstractMCMC's `N` already means kept draws; `discard_initial` adds
+    # `warmup_per_chain` steps on top (total steps sampled = per_chain + warmup_per_chain).
     if quiet
         TR.samples = @suppress sample(model_with_data, sampler, parallel, per_chain, nchains; nadapts=warmup_per_chain, discard_initial=warmup_per_chain, chain_type=VNChain, initial_params=initial_params_per_chain, progress=false, kwargs...)
     else
@@ -352,9 +344,8 @@ function _fit!(
 
     # Raw standardised-scale sampled params straight off the chain, stacked into
     # (iter,chain,param) with vector/matrix VarNames split into indices (`β[1]`,
-    # `L.L[2,1]`, ...), no model return statement needed. `reshape_params` splits this
-    # flat array into named layers (still standardised scale); `unstandardise` then
-    # back-transforms those layers to the original data scale.
+    # `L.L[2,1]`, ...), no model return statement needed. reshape.jl and unstandardise.jl 
+    # define these functions that reshape them and convert to the model data scale.
     raw = DimArray(TR.samples)
     std_params = reshape_params(raw, TR.modeldata, T)
     TR.parameters = unstandardise(std_params, TR.tf, TR.modeldata, T)

@@ -1,4 +1,5 @@
 
+# Stubs for MakieExt
 function lineribbon end
 function lineribbon! end
 function categorical_layout end

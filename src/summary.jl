@@ -46,7 +46,7 @@ Display formatted summary table of model parameters.
 - `funs`: Summary functions to apply (default: [median, std])
 - `quantiles`: Quantiles to compute (default: [0.025, 0.975] for 95% CI)
 - `return_table`: Whether to return the summary table as NamedTuple
-- `drop_draws`: Number of extra warmup draws to drop, on top of what `fit!` already discarded during adaptation (default: 0 — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
+- `drop_draws`: Number of extra warmup draws to drop, on top of what `fit!` already discarded as warmup draws
 - `kwargs...`: Additional arguments passed to `draws` (e.g. `n_draws`)
 """
 function model_summary(

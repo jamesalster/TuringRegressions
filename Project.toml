@@ -4,8 +4,6 @@ version = "0.1.0"
 authors = ["James Alster <jamesalster2@gmail.com"]
 
 [deps]
-CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
-CategoricalDistributions = "af321ab8-2d2e-40a6-b165-3d674595d28e"
 Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
@@ -24,7 +22,6 @@ PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
-StatisticalMeasures = "a19d573c-0a75-4610-95b3-7071388c7541"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsAPI = "82ae8749-77ed-4fe6-ae5f-f523153014b0"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
@@ -40,8 +37,6 @@ Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 TuringRegressionsMakieExt = "Makie"
 
 [compat]
-CategoricalArrays = "1"
-CategoricalDistributions = "0.2"
 Crayons = "4"
 DataFrames = "1"
 # Pinned to 0.30: its Makie ext maps dims to axes, and the readme's plotting
@@ -63,7 +58,6 @@ PrettyTables = "3"
 Random = "1"
 Reexport = "1"
 ReverseDiff = "1.17"
-StatisticalMeasures = "0.3"
 Statistics = "1"
 StatsAPI = "1.8.0"
 StatsBase = "0.34"

@@ -14,7 +14,7 @@ Design Features:
 * Model code dynamically constructed, can be viewed and exported and also modified manually
 * Sampling performance in NUTS optimised as far as possible; ReverseDiff used for random effect models to improve performance
 * Outputs use `DimensionalData` for easy indexing
-* `PrettyTable` model summaries, with prediction metrics
+* `PrettyTable` model summaries with convergence diagnostics
 * Prediction on same or new data
 * `StatsAPI.RegressionModel` interface implemented as far as possible
 * Model comparison with Psis and Loo
@@ -53,7 +53,6 @@ fit!(mod; samples=1000, warmup=1000, nchains=2)
 
 # View results
 model_summary(mod)
-model_summary(mod; show_metrics=true) # Just taken from posterior draws
 prior_summary(mod) # Just the prior block — same as show(mod), no formula/samples/warnings
 
 # Get coefficients
@@ -109,12 +108,6 @@ posterior_predict(re_mod, new_subjects; allow_new_levels=true)
 
 # StatsAPI point-estimate predict (interop only, see StatsAPI section below)
 predict(mod, new_data) # posterior-mean epred, plain Vector
-
-# Metrics
-using StatisticalMeasures # to be able to pass metrics, otherwise defaults only
-calculate_metrics(mod, [rsq, rmse]) # All draws
-calculate_metrics(median, mod, [rsq, rmse]) # Pass function to reduce
-default_metrics(mean, mod) # Models have defaults defined
 
 # Compare models
 robust_mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, TDist)
@@ -175,7 +168,6 @@ pp_check_dens_overlay(mod)
 * `draws(f, model, type; dropdims, kwargs...)` - Apply reducer `f` (e.g. `median`) over draw/chain dims
 * `outcome(model)` - Response variable
 * `get_fixef_predictors(model)` - Fixed-effect predictor table
-* `outcome_as_distribution(model)` - Response variable as CategoricalDistributions.jl object (Bernoulli only)
 
 ### Predictions
 * `posterior_predict(model, X=model.modeldata.predictors.X; type=:posterior, kwargs...)` - Generate full-posterior predictions (`type` one of `:posterior`, `:epred`, `:linpred`) — the package's primary predict API
@@ -199,10 +191,6 @@ pp_check_dens_overlay(mod)
 * `model_summary(model)` - Formatted summary with diagnostics (rhat, ess, mcse)
 * `model_warnings(model)` - Report rhat/ess/mcse warnings
 * `prior_summary(model)` - Print the prior block alone
-* `calculate_metrics(model, [metrics]; threshold=0.5, kwargs...)` - Model metrics (from StatisticalMeasures.jl)
-* `calculate_metrics(fun, model, [metrics]; kwargs...)` - Reduce draws with `fun` first, matching `draws`
-* `default_metrics(model)` / `default_metrics(fun, model)` - Default model metrics (regression: rsq/rmse/mae; Bernoulli: accuracy/kappa/TPR/TNR/auc/pseudo_r2)
-* `pseudo_r2(preds, y)` - McFadden's pseudo-R² for binary outcomes. A metric to pass to `calculate_metrics`, not a model accessor
 * `modelcode(model)` - Print + return the generated Turing `@model` code as an `Expr`
 * `set_model_code!(model, expr)` - Override the model with a hand-edited `Expr` (from `modelcode`); read docstring before using
 

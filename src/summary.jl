@@ -47,8 +47,7 @@ Display formatted summary table of model parameters.
 - `quantiles`: Quantiles to compute (default: [0.025, 0.975] for 95% CI)
 - `return_table`: Whether to return the summary table as NamedTuple
 - `drop_draws`: Number of extra warmup draws to drop, on top of what `fit!` already discarded during adaptation (default: 0 — `TR.samples` holds no warmup draws already, see `fit!`'s `warmup` kwarg)
-- `show_metrics`: Whether to compute and display the prediction metrics table (default: false)
-- `kwargs...`: Additional arguments passed to `draws`/`default_metrics` (e.g. `n_draws`)
+- `kwargs...`: Additional arguments passed to `draws` (e.g. `n_draws`)
 """
 function model_summary(
     io::IO,
@@ -57,12 +56,10 @@ function model_summary(
     quantiles=[0.025, 0.975],
     return_table=false,
     drop_draws=nothing,
-    show_metrics=false,
     kwargs...,
 )
     isnothing(TR.samples) && throw(ArgumentError("Turing Model has not yet been fit!()"))
 
-    funs_all = vcat(funs, [(x -> quantile(x, q)) for q in quantiles])
     func_names_all = vcat(
         Symbol.(funs), [Symbol("q$(round(q*100; digits=1))") for q in quantiles]
     )
@@ -74,14 +71,6 @@ function model_summary(
     chain_info = _diagnostics_table(fixef_draws, param_names, funs, func_names_all, quantiles)
 
     ncols = length(chain_info)
-
-    #metrics
-    if show_metrics
-        metric_tabs = map(
-            f -> default_metrics(f, TR; drop_draws=drop_draws, kwargs...), funs_all
-        )
-        metric_tab = hcat(metric_tabs...)
-    end
 
     # header: family/formula/observations/samples, no prior — same content as the full
     # show(io, MIME"text/plain", TR) minus the prior block
@@ -153,18 +142,6 @@ function model_summary(
                 )
             end
         end
-    end
-    if show_metrics
-        pretty_table(
-            io,
-            Matrix(metric_tab);
-            title="Prediction Metrics",
-            column_labels=func_names_all,
-            row_labels=Array(dims(first(metric_tabs), 1)),
-            stubhead_label="Metric",
-            formatters=[fmt__printf("%5.3f")],
-            default_options...,
-        )
     end
     model_warnings(chain_info)
     if return_table

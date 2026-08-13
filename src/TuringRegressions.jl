@@ -25,7 +25,6 @@ using PrettyTables
 using Crayons: @crayon_str
 using MixedModels
 using Random
-using StatisticalMeasures
 using PosteriorStats: loo, compare
 using MCMCDiagnosticTools
 using FlexiChains: FlexiChains, VNChain
@@ -38,8 +37,6 @@ import StatsBase: StatsBase, mean, std, cov, CoefTable, ZScoreTransform, fit, tr
 using DataFrames: DataFrame
 using Tables: columntable
 using LinearAlgebra: I, dot, Symmetric, diagm, diag, Diagonal
-using CategoricalArrays: categorical
-using CategoricalDistributions: UnivariateFinite
 using PrecompileTools: @compile_workload
 
 include("prior.jl")
@@ -53,7 +50,6 @@ include("utils.jl")
 include("parametermethods.jl")
 include("predict.jl")
 include("summary.jl")
-include("metrics.jl")
 include("comparison.jl")
 include("plots.jl")
 include("statsapi.jl")
@@ -85,17 +81,13 @@ export TuringRegression,
     draws,
     outcome,
     get_fixef_predictors,
-    outcome_as_distribution,
     posterior_predict,
     psis_loo,
     loo_compare,
-    calculate_metrics,
-    default_metrics,
     default_prior,
     prior_summary,
     modelcode,
     set_model_code!,
-    pseudo_r2,
     lineribbon,
     lineribbon!,
     categorical_layout,

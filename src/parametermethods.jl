@@ -86,21 +86,3 @@ Get the fixed-effects predictor matrix as DimArray.
 function get_fixef_predictors(TR::TuringRegression)
     return DimArray(TR.modeldata.predictors.X, (Dim{:row}, Dim{:var}([TR.modeldata.predictors.X_names...])))
 end
-
-
-"""
-    outcome_as_distribution(TR::TuringRegression{Bernoulli})
-
-Get the categorical outcome from the model as a UnivariateFinite distribution from
-    `CategoricalDistributions.jl`
-"""
-function outcome_as_distribution(TR::TuringRegression{T}) where {T}
-    if T != Bernoulli
-        throw(
-            ArgumentError(
-                "Outcome can only be returned as a UnivariateFinite distribution from a Bernoulli model.",
-            ),
-        )
-    end
-    return Distributions.fit(UnivariateFinite, categorical(TR.modeldata.y .== 1))
-end

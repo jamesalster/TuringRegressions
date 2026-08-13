@@ -14,8 +14,6 @@ using StatsBase: mean, std, var, CoefTable
 using Suppressor: @suppress
 using Random
 using GLM: GLM
-using StatisticalMeasures
-using CategoricalDistributions
 using DataFrames
 using LinearAlgebra: diag
 using CairoMakie
@@ -320,8 +318,6 @@ bernoulli_mod = fitmodel(@formula(Binom ~ Cyl + Disp), mtcars, Bernoulli)
 
     @test Array(outcome(normal_mod)) == mtcars.MPG
     @test collect(dims(get_fixef_predictors(normal_mod), :var)) == ["Cyl", "Disp"]
-    @test outcome_as_distribution(bernoulli_mod) isa UnivariateFinite
-    @test_throws ArgumentError outcome_as_distribution(normal_mod)
 end
 
 @testset "Predict" begin
@@ -409,34 +405,6 @@ end
     end
 end
 
-@testset "Metrics" begin
-    tab = calculate_metrics(normal_mod, [rsq, rmse])
-    @test tab isa DimArray
-    @test collect(dims(tab, 1)) == ["RSquared", "RootMeanSquaredError"]
-    @test collect(dims(default_metrics(normal_mod), 1)) ==
-          ["RSquared", "RootMeanSquaredError", "MeanAbsoluteError"]
-    # reducer form collapses draws to one value per metric
-    @test size(calculate_metrics(mean, normal_mod, [rsq, rmse])) == (2,)
-
-    @test collect(dims(calculate_metrics(bernoulli_mod, [accuracy, kappa]), 1)) == ["Accuracy", "Kappa"]
-    @test collect(dims(default_metrics(bernoulli_mod), 1)) ==
-          ["Accuracy", "Kappa", "TruePositiveRate", "TrueNegativeRate", "AreaUnderCurve", "Pseudo r2"]
-
-    # pseudo_r2 is McFadden's, on (preds, y) vectors — a metric to hand to
-    # calculate_metrics, not a model accessor. Checked against hand-computed values
-    # because it is our own implementation, not StatisticalMeasures'.
-    y = [1.0, 1.0, 0.0, 0.0]
-    @test TR.pseudo_r2([0.5, 0.5, 0.5, 0.5], y) ≈ 0.0          # null model ⇒ no improvement
-    @test TR.pseudo_r2([0.99, 0.99, 0.01, 0.01], y) > 0.95     # near-perfect ⇒ approaches 1
-    ll_full = 2 * log(0.8) + 2 * log(0.7)
-    ll_null = 4 * log(0.5)
-    @test TR.pseudo_r2([0.8, 0.8, 0.3, 0.3], y) ≈ 1 - ll_full / ll_null
-
-    # dropdims=false: with a single metric the length-1 :metric dim is dropped, taking the
-    # name with it
-    @test collect(dims(calculate_metrics(bernoulli_mod, [pseudo_r2]; dropdims=false), 1)) == ["Pseudo r2"]
-end
-
 @testset "Display" begin
     compact = sprint(show, normal_mod)
     @test contains(compact, "TuringRegression{Normal}")
@@ -451,7 +419,7 @@ end
     # tables crop to the display width rather than wrapping, so a default 80-col `sprint`
     # loses the right-hand columns — render wide to see them all
     summary_text = sprint(
-        (io, x) -> model_summary(io, x; show_metrics=true), normal_mod; context=(:displaysize => (24, 200))
+        (io, x) -> model_summary(io, x), normal_mod; context=(:displaysize => (24, 200))
     )
     @test contains(summary_text, "Family:")
     @test contains(summary_text, "Fixed Effects")
@@ -460,8 +428,6 @@ end
     narrow = sprint((io, x) -> model_summary(io, x), normal_mod; context=(:displaysize => (24, 60)))
     @test contains(narrow, "columns omitted")
     @test all(line -> length(line) <= 60, filter(contains('│'), split(narrow, '\n')))
-    @test contains(summary_text, "Prediction Metrics")
-    @test !contains(sprint(model_summary, normal_mod), "Prediction Metrics")
 
     @test model_summary(devnull, normal_mod; return_table=true) isa NamedTuple
 

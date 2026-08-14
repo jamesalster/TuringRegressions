@@ -31,7 +31,7 @@ family-appropriate default, e.g. `default_prior(Normal; lkj_eta=2.0)`.
 
 The auxiliary parameter adapts to the family:
 - Normal: Exponential(1) for variance
-- TDist: Gamma(2, 0.1) for degrees of freedom
+- TDist: Gamma(2, 10) truncated below at 1, for degrees of freedom
 - Bernoulli: Unused
 
 `lkj_eta` defaults to 1.0 — see `RegressionPrior` docstring.
@@ -48,7 +48,10 @@ function default_prior(
     default_auxiliary = if family ∈ [Normal, Bernoulli, Poisson, NegativeBinomial]
         Exponential(1)
     elseif family == TDist
-        Gamma(2, 0.1)
+        # Stan/brms write this as gamma(2, 0.1), where 0.1 is a RATE; Distributions'
+        # second argument is a SCALE, so the equivalent is Gamma(2, 10) — mean ν = 20,
+        # not 0.2. Truncating at 1 matches brms, which bounds ν ≥ 1.
+        truncated(Gamma(2, 10); lower=1)
     else
         error("No default prior implemented for model family: $(string(family))")
     end

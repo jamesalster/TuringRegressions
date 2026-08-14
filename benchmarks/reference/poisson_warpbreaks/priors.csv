@@ -1,0 +1,6 @@
+"model","prior","class","coef","group"
+"poisson_warpbreaks","","b","",""
+"poisson_warpbreaks","normal(0, 4.203173404)","b","TensionL",""
+"poisson_warpbreaks","normal(0, 4.203173404)","b","TensionM",""
+"poisson_warpbreaks","normal(0, 3.962789889)","b","WoolB",""
+"poisson_warpbreaks","normal(0, 5)","Intercept","",""

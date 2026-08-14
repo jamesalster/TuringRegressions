@@ -113,6 +113,12 @@ cbpp_bern <- do.call(rbind, lapply(seq_len(nrow(cbpp_df)), function(i) {
 }))
 cbpp_bern <- write_data(cbpp_bern, "cbpp_bernoulli")
 
+# Genuine count data (10-70 range) for the Poisson fixture, unlike mtcars$HP
+# which is continuous and forces brms itself into non-convergence.
+warpbreaks_df <- datasets::warpbreaks
+names(warpbreaks_df) <- c("Breaks", "Wool", "Tension")
+warpbreaks_df <- write_data(warpbreaks_df, "warpbreaks")
+
 # Weighted fit reference. Integer weights so brms's `weights()` (a log-lik
 # multiplier, same as ours) has an unambiguous meaning.
 mtcars_w <- mtcars_df
@@ -350,7 +356,7 @@ MODELS <- list(
        notes = "n=2201, all-factor predictors"),
   spec("bernoulli_mtcars", mtcars_df, Binom ~ Cyl + Disp, bernoulli(),
        notes = "n=32 binary, near-separated: the prior is what keeps it finite"),
-  spec("poisson_mtcars", mtcars_df, HP ~ Cyl + Disp, poisson()),
+  spec("poisson_warpbreaks", warpbreaks_df, Breaks ~ Wool + Tension, poisson()),
   spec("negbin_mtcars", mtcars_df, HP ~ Cyl + Disp, negbinomial(),
        notes = "shape prior is inv_gamma(1,1); brms shape = 1/phi, and phi is emitted as a derived draw"),
 

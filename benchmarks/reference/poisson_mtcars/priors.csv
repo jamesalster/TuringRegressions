@@ -1,5 +1,0 @@
-"model","prior","class","coef","group"
-"poisson_mtcars","","b","",""
-"poisson_mtcars","normal(0, 1.119869958)","b","Cyl",""
-"poisson_mtcars","normal(0, 0.01613701047)","b","Disp",""
-"poisson_mtcars","normal(0, 5)","Intercept","",""

@@ -1,8 +1,13 @@
 # Test targets. The --depwarn=no is NOT optional: Pkg.test hardcodes --depwarn=yes on
 # the test worker, which costs ~20x per fit here (normal_iris at the benchmark budget:
-# 2.1s -> 42.9s). julia_args is appended after Pkg's own flags, so it wins.
+# 2.1s -> 42.9s). --check-bounds=no/--warn-overwrite=no are off to match — see the
+# "Diagnostics" testset in test/runtests.jl, which runs with all three ON instead.
+# julia_args is appended after Pkg's own flags, so it wins.
 JULIA ?= julia
-TEST := $(JULIA) --project=. -e 'using Pkg; Pkg.test(julia_args=["--depwarn=no"])'
+# `catch; exit(1)` swaps Pkg.test's own pkgerror stacktrace (noise — the report CSV and
+# the printed pass/fail counts already say what failed) for a plain nonzero exit, which
+# make still reports and CI can still key off.
+TEST := $(JULIA) --project=. -e 'using Pkg; try; Pkg.test(julia_args=["--depwarn=no", "--check-bounds=no", "--warn-overwrite=no"]); catch; exit(1); end'
 
 .PHONY: test fast benchmarks benchmarks-full
 

@@ -91,6 +91,7 @@ draws(re_mod, :Subject_sd) # group-level SDs, dims (effect__Subject, draw)
 draws(re_mod, :Subject_corr) # intercept/slope correlation matrix, dims (effect__Subject, effect2__Subject, draw)
 
 # MixedModels-style nested (`a/b`) and interaction (`a&b`) grouping formulas are supported.
+# Batch just an example variable, not present in dataset
 turing_glm(@formula(Reaction ~ 1 + Days + (1 | Batch / Subject)), sleepstudy, Normal)   # -> :Batch, :Batch__Subject
 turing_glm(@formula(Reaction ~ 1 + Days + (1 | Batch & Subject)), sleepstudy, Normal)   # -> :Batch__Subject
 
@@ -239,3 +240,5 @@ Consider more prior customisability — currently priors are one-per-role (`Regr
 Plotting a `DimArray` of draws directly with `violin`/`boxplot`/`rainclouds` is broken on DimensionalData 0.30: each category is drawn from an interleaved mixture of every other one, and categories are positioned by the sum of their label's character codes, so parameter names land at arbitrary spacings. Both are reported upstream; `categorical_layout` works around them. `scatter` over three parameters needs `parent()` for the same reason — DimensionalData builds a 2D axis and silently drops the third (fixed on its `main`, unreleased at the time of writing).
 
 Note that the random-effect SDs sit above lme4/brms on the sleepstudy benchmark (intercept SD ≈ 29 vs lme4's 24.7). The LKJ shape is now settable via `default_prior(family; lkj_eta=...)`, but the default of 1.0 is flat on the standardised-scale correlation, which is the suspected cause.
+
+Make the fit checks against brms confirm not only point estimate but also SDs and CIs.

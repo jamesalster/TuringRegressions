@@ -74,7 +74,9 @@ end
 _ranef_group_values(rhs::CategoricalTerm, d::NamedTuple) = string.(d[rhs.sym])
 function _ranef_group_values(rhs::InteractionTerm, d::NamedTuple)
     columns = [string.(d[t.sym]) for t in rhs.terms]
-    return [join(row, ":") for row in zip(columns...)]
+    # "_"-joined to match brms/Stan's own nested-level naming (e.g. `r_Batch:Subject[p_308,...]`)
+    # so our level labels can be looked up directly against the brms reference.
+    return [join(row, "_") for row in zip(columns...)]
 end
 
 function extract_random_effect(term::RandomEffectsTerm, d::NamedTuple)

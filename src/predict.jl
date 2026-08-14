@@ -76,9 +76,13 @@ end
 # A level_index of 0 (unseen new-data level, allow_new_levels=true) contributes nothing,
 # i.e. the population-mean (zero) random effect.
 function _add_random_effects!(μ::AbstractArray, TR::TuringRegression, z::Vector{RandomEffect}; kwargs...)
-    for re in z
-        layer = Array(draws(TR, re.variable; kwargs...))
-        effect_names = collect(dims(TR.parameters[re.variable], :effect))
+    # Keys off the FITTED terms: `z` may be new-data ranefs, which `new_random_effects`
+    # builds index-aligned with `TR.modeldata.Z`. Looking them up by grouping variable
+    # instead would make two terms on one group read the same layer.
+    for (re, key) in zip(z, ranef_layer_keys(TR.modeldata.Z))
+        layer_draws = draws(TR, key; kwargs...)
+        effect_names = collect(dims(layer_draws, _effect_dim_name(key)))
+        layer = Array(layer_draws)
         intercept_pos = re.predictors.has_intercept ? findfirst(==(:Intercept), effect_names) : nothing
         slope_positions = has_fixed_effects(re.predictors) ? findall(!=(:Intercept), effect_names) : Int[]
         for c in 1:size(μ, 3), r in axes(μ, 1)

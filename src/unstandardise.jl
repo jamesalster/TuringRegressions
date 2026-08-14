@@ -77,14 +77,13 @@ end
 # spread (sd/corr) go through the SAME linear map `A`, so a group's reported SD always
 # describes the same quantity (at raw X=0) as its reported point estimate. Ranef terms
 # are mean-zero by construction — no intercept offset here, unlike fixef.
-function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::RandomEffect, xt::ZScoreTransform)
-    group = ranef.variable
+function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::RandomEffect, xt::ZScoreTransform, key::Symbol)
     has_int = ranef.predictors.has_intercept
 
-    effects_std = Array(std_layers[Symbol(group)])         # (effect,group,draw,chain)
-    sds_std = Array(std_layers[Symbol(group, "_sd")])      # (effect,draw,chain)
-    names = collect(dims(std_layers[Symbol(group)], :effect))
-    levels = collect(dims(std_layers[Symbol(group)], _group_dim_name(group)))
+    effects_std = Array(std_layers[key])                 # (effect,group,draw,chain)
+    sds_std = Array(std_layers[Symbol(key, "_sd")])      # (effect,draw,chain)
+    names = collect(dims(std_layers[key], _effect_dim_name(key)))
+    levels = collect(dims(std_layers[key], _group_dim_name(key)))
     ndraw, nchain = size(effects_std, 3), size(effects_std, 4)
     draw_chain = (Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain))
 
@@ -93,7 +92,7 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::Random
     # One covariance transform per draw: Σ_orig = A·(D·R·D)·A'. SDs are its diagonal, so
     # they carry the same cross terms as the corr matrix — no diagonal-only shortcut here,
     # which would drop ρ and misreport the Intercept SD for correlated terms.
-    corr_std = _is_correlated(ranef) ? Array(std_layers[Symbol(group, "_corr")]) : nothing
+    corr_std = _is_correlated(ranef) ? Array(std_layers[Symbol(key, "_corr")]) : nothing
 
     effects_raw = similar(effects_std)
     sds_raw = similar(sds_std)   # recomputed from Σ below, not scaled directly
@@ -112,12 +111,15 @@ function _unstandardise_ranef(std_layers::DimStack, tf::Transform, ranef::Random
     end
 
     base = (;
-        Symbol(group) => DimArray(effects_raw, (Dim{:effect}(names), Dim{_group_dim_name(group)}(levels), draw_chain...)),
-        Symbol(group, "_sd") => DimArray(sds_raw, (Dim{:effect}(names), draw_chain...)),
+        key => DimArray(effects_raw, (Dim{_effect_dim_name(key)}(names), Dim{_group_dim_name(key)}(levels), draw_chain...)),
+        Symbol(key, "_sd") => DimArray(sds_raw, (Dim{_effect_dim_name(key)}(names), draw_chain...)),
     )
 
-    isnothing(corr_raw) ||
-        return merge(base, (; Symbol(group, "_corr") => DimArray(corr_raw, (Dim{:effect}(names), Dim{:effect2}(names), draw_chain...))))
+    isnothing(corr_raw) || return merge(base, (;
+        Symbol(key, "_corr") => DimArray(
+            corr_raw, (Dim{_effect_dim_name(key)}(names), Dim{_effect2_dim_name(key)}(names), draw_chain...)
+        ),
+    ))
     return base
 end
 
@@ -130,9 +132,10 @@ Pure rescale, no structural reshuffling — see `reshape_params`.
 function unstandardise(std_params::DimStack, tf::Transform, md::ModelData, family::Type{<:Distribution})
     # `family` is only needed for the aux params, which are fixef-only.
     layers = (; fixef=_unstandardise_fixef(std_params.fixef, tf, family))
-    # `tf.ranef` is index-aligned with `md.Z` by construction (compute_transform).
-    for (ranef, xt) in zip(md.Z, tf.ranef)
-        layers = merge(layers, _unstandardise_ranef(std_params, tf, ranef, xt))
+    # `tf.ranef` and the layer keys are both index-aligned with `md.Z` by construction
+    # (compute_transform / ranef_layer_keys).
+    for (ranef, xt, key) in zip(md.Z, tf.ranef, ranef_layer_keys(md.Z))
+        layers = merge(layers, _unstandardise_ranef(std_params, tf, ranef, xt, key))
     end
     return DimStack(layers)
 end

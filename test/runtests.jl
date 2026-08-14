@@ -176,10 +176,21 @@ try # keep going through sibling testsets on failure, still print the benchmark 
         @test [z.variable for z in interaction.Z] == [:Batch__Subject]
     end
 
-    # Layers are keyed by grouping variable, so two terms on the same group collide
-    @test_logs (:warn, r"share grouping variable") TR.extract_model_data(
-        @formula(Reaction ~ 1 + Days + (1 | Subject) + (0 + Days | Subject)), sleepstudy
-    )
+    @testset "layer keys disambiguate shared grouping variables" begin
+        # A group used once keeps its bare name — the public layer names must not change.
+        single = TR.extract_model_data(@formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy)
+        @test TR.ranef_layer_keys(single.Z) == [:Subject]
+
+        nested = TR.extract_model_data(@formula(Reaction ~ 1 + Days + (1 | Batch / Subject)), sleepstudy)
+        @test TR.ranef_layer_keys(nested.Z) == [:Batch, :Batch__Subject]
+
+        # `(1|g) + (0+x|g)` is the lme4/brms spelling for uncorrelated intercept + slope.
+        # Keyed on :Subject alone the second term's layers overwrite the first's.
+        shared = TR.extract_model_data(
+            @formula(Reaction ~ 1 + Days + (1 | Subject) + (0 + Days | Subject)), sleepstudy
+        )
+        @test TR.ranef_layer_keys(shared.Z) == [:Subject_1, :Subject_2]
+    end
 
     @testset "new-data grouping levels" begin
         subjects = unique(sleepstudy.Subject)
@@ -516,12 +527,12 @@ end
         @test propertynames(d) == (:fixef, :Subject, :Subject_sd, :Subject_corr)
 
         subject = draws(re_corr, :Subject)
-        @test collect(dims(subject, :effect)) == [:Intercept, :Days]
-        @test size(subject, :group) == 18
+        @test collect(dims(subject, :effect__Subject)) == [:Intercept, :Days]
+        @test size(subject, :group__Subject) == 18
         # readme idiom: one subject's slope offset. Levels are Strings, not the
         # integers the raw sleepstudy column looks like.
-        @test eltype(dims(subject, :group)) <: AbstractString
-        @test draws(mean, re_corr, :Subject)[effect=At(:Days), group=At("308")] isa Real
+        @test eltype(dims(subject, :group__Subject)) <: AbstractString
+        @test draws(mean, re_corr, :Subject)[effect__Subject=At(:Days), group__Subject=At("308")] isa Real
 
         corr = draws(re_corr, :Subject_corr)
         @test size(corr) == (2, 2, size(corr, :iter))
@@ -534,8 +545,8 @@ end
         @test isapprox(fixef[1], 251.4, atol=20)
         @test isapprox(fixef[2], 10.5, atol=6)
         subject_sd = draws(mean, re_corr, :Subject_sd)
-        @test isapprox(subject_sd[effect=At(:Intercept)], 24.7, atol=20)
-        @test isapprox(subject_sd[effect=At(:Days)], 5.9, atol=6)
+        @test isapprox(subject_sd[effect__Subject=At(:Intercept)], 24.7, atol=20)
+        @test isapprox(subject_sd[effect__Subject=At(:Days)], 5.9, atol=6)
 
         # no grouping information in a bare matrix, so this must error rather than
         # silently predict without the random effects. `copy` matters: _resolve_z only lets
@@ -548,13 +559,13 @@ end
 
     @testset "intercept-only (1|Subject)" begin
         @test propertynames(draws(re_intercept)) == (:fixef, :Subject, :Subject_sd)
-        @test collect(dims(draws(re_intercept, :Subject), :effect)) == [:Intercept]
+        @test collect(dims(draws(re_intercept, :Subject), :effect__Subject)) == [:Intercept]
     end
 
     @testset "slope-only (0+Days|Subject)" begin
         d = draws(re_slope)
         @test propertynames(d) == (:fixef, :Subject, :Subject_sd)
-        @test collect(dims(draws(re_slope, :Subject), :effect)) == [:Days]
+        @test collect(dims(draws(re_slope, :Subject), :effect__Subject)) == [:Days]
 
         # epred vs lme4 `lmer(Reaction ~ 1 + Days + (0 + Days | Subject), sleepstudy)`
         # fitted values (REML), spot-checked on subject 1 (rows 1:10, full Days=0:9 range).
@@ -565,6 +576,36 @@ end
         ]
         epred_mean = Array(posterior_predict(mean, re_slope; type=:epred))
         @test isapprox(epred_mean[1:10], lme4_fitted_subject1, atol=15, norm=x -> maximum(abs, x))
+    end
+
+    # `(1|g) + (0+x|g)`: two terms, one grouping variable. Keying layers on the bare
+    # group name dropped the first term entirely — its layers were overwritten on merge,
+    # and `_add_random_effects!` then found no :Intercept in the survivor and silently
+    # left the random intercept out of every prediction.
+    @testset "two terms on one grouping variable" begin
+        uncorr = fitmodel(
+            @formula(Reaction ~ 1 + Days + (1 | Subject) + (0 + Days | Subject)), sleepstudy, Normal
+        )
+        @test propertynames(draws(uncorr)) ==
+              (:fixef, :Subject_1, :Subject_1_sd, :Subject_2, :Subject_2_sd)
+        @test collect(dims(draws(uncorr, :Subject_1), :effect__Subject_1)) == [:Intercept]
+        @test collect(dims(draws(uncorr, :Subject_2), :effect__Subject_2)) == [:Days]
+
+        # Both terms must reach the prediction. Identity link + posterior mean is linear,
+        # so the reconstruction is exact, not approximate.
+        fixef = Array(draws(mean, uncorr, :fixef))
+        u_int = vec(Array(draws(mean, uncorr, :Subject_1)))   # one effect per term, so
+        u_slope = vec(Array(draws(mean, uncorr, :Subject_2))) # dropdims leaves 18 levels
+        g = uncorr.modeldata.Z[1].level_index
+        expected = fixef[1] .+ fixef[2] .* sleepstudy.Days .+ u_int[g] .+ u_slope[g] .* sleepstudy.Days
+        @test Array(posterior_predict(mean, uncorr; type=:epred)) ≈ expected
+
+        # dropping the intercept term would collapse the per-subject offsets to zero
+        @test maximum(abs, u_int) > 1.0
+
+        text = sprint(model_summary, uncorr)
+        @test contains(text, "Random Effects: Subject_1 (SD)")
+        @test contains(text, "Random Effects: Subject_2 (SD)")
     end
 
     @testset "predict on new grouping levels" begin
@@ -626,13 +667,13 @@ end
     @test propertynames(interaction.parameters) == (:fixef, :Batch__Subject, :Batch__Subject_sd)
 
     batch_draws = draws(nested, :Batch)
-    @test collect(dims(batch_draws, :group)) == ["p", "q"]
+    @test collect(dims(batch_draws, :group__Batch)) == ["p", "q"]
 
     nested_draws = draws(nested, :Batch__Subject)
-    @test size(nested_draws, :group) == 18
+    @test size(nested_draws, :group__Batch__Subject) == 18
 
     interaction_draws = draws(interaction, :Batch__Subject)
-    @test size(interaction_draws, :group) == 18
+    @test size(interaction_draws, :group__Batch__Subject) == 18
 
     @test contains(sprint(model_summary, nested), "Random Effects: Batch (Intercept)")
     @test contains(sprint(model_summary, nested), "Random Effects: Batch__Subject (Intercept)")

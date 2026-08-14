@@ -69,6 +69,10 @@ draws(mod, :fixef; collapse=false)[chain=1:2, fixef=Where(x -> occursin(r"yl", s
 draws(mod, :fixef; drop_draws=100, n_draws=300, collapse=false)
 
 # Random effects — correlated intercept + slope per group
+#
+# NB a ranef layer's effect/group dims are named `:effect__{type}`/`:group__{type}`, not
+# the bare `:effect`/`:group` — a DimStack keeps one axis per dim name, so terms sharing
+# a grouping variable, or differing in effect labels, need per-term axis names.
 sleepstudy = dataset("lme4", "sleepstudy")
 re_mod = turing_glm(
     @formula(Reaction ~ 1 + Days + (1 + Days | Subject)),
@@ -81,14 +85,19 @@ fit!(re_mod; samples=1000, warmup=1000, nchains=2)
 
 propertynames(draws(re_mod)) # (:fixef, :Subject, :Subject_sd, :Subject_corr)
 
-draws(re_mod, :Subject) # per-Subject offsets, dims (effect, group, draw)
-draws(mean, re_mod, :Subject)[effect=At(:Days), group=At("308")] # one subject's slope offset (levels are Strings)
-draws(re_mod, :Subject_sd) # group-level SDs, dims (effect, draw)
-draws(re_mod, :Subject_corr) # intercept/slope correlation matrix, dims (effect, effect2, draw)
+draws(re_mod, :Subject) # per-Subject offsets, dims (effect__Subject, group__Subject, draw)
+draws(mean, re_mod, :Subject)[effect__Subject=At(:Days), group__Subject=At("308")] # one subject's slope offset (levels are Strings)
+draws(re_mod, :Subject_sd) # group-level SDs, dims (effect__Subject, draw)
+draws(re_mod, :Subject_corr) # intercept/slope correlation matrix, dims (effect__Subject, effect2__Subject, draw)
 
 # MixedModels-style nested (`a/b`) and interaction (`a&b`) grouping formulas are supported.
 turing_glm(@formula(Reaction ~ 1 + Days + (1 | Batch / Subject)), sleepstudy, Normal)   # -> :Batch, :Batch__Subject
 turing_glm(@formula(Reaction ~ 1 + Days + (1 | Batch & Subject)), sleepstudy, Normal)   # -> :Batch__Subject
+
+# Two terms on ONE grouping variable — the lme4/brms spelling for an uncorrelated
+# intercept and slope — get numbered layers, in formula order.
+turing_glm(@formula(Reaction ~ 1 + Days + (1 | Subject) + (0 + Days | Subject)), sleepstudy, Normal)
+# -> :Subject_1 (Intercept), :Subject_2 (Days), plus their _sd layers
 
 # Make predictions (full posterior — the package's primary predict API)
 posterior_predict(mod)  # For original data
@@ -164,7 +173,7 @@ pp_check_dens_overlay(mod)
 
 ### Parameter Extraction
 * `draws(model; drop_draws, n_draws, collapse)` - Whole parameter `DimStack` (all layers)
-* `draws(model, type; drop_draws, n_draws, collapse)` - Single layer `DimArray`. `type` one of `propertynames(model.parameters)`, e.g. `:fixef`, `:{group}`, `:{group}_sd`, `:{group}_corr`
+* `draws(model, type; drop_draws, n_draws, collapse)` - Single layer `DimArray`. `type` one of `propertynames(model.parameters)`, e.g. `:fixef`, `:{group}`, `:{group}_sd`, `:{group}_corr` (numbered `:{group}_1`, `:{group}_2`, … when several ranef terms share one grouping variable). A ranef layer's effect/group dims are named `:effect__{type}`/`:group__{type}`, not the bare `:effect`/`:group`
 * `draws(f, model, type; dropdims, kwargs...)` - Apply reducer `f` (e.g. `median`) over draw/chain dims
 * `outcome(model)` - Response variable
 * `get_fixef_predictors(model)` - Fixed-effect predictor table

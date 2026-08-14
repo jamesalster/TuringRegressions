@@ -91,12 +91,12 @@ function model_summary(
         default_options...,
     )
     if has_random_effects(TR)
-        for re in TR.modeldata.Z
-            group = re.variable
-
+        # Tables are titled by the LAYER key, so two terms on one grouping variable get
+        # their own headed block (`Subject_1` / `Subject_2`) rather than one ambiguous pair.
+        for group in ranef_layer_keys(TR.modeldata.Z)
             level_draws = draws(TR, group; drop_draws=drop_draws, collapse=false, kwargs...)
-            level_effect_names = collect(dims(level_draws, :effect))
-            levels = collect(dims(level_draws, :group))
+            level_effect_names = collect(dims(level_draws, _effect_dim_name(group)))
+            levels = collect(dims(level_draws, _group_dim_name(group)))
             for (ei, eff) in enumerate(level_effect_names)
                 level_info = _diagnostics_table(level_draws[ei, :, :, :], levels, funs, func_names_all, quantiles)
                 pretty_table(
@@ -113,7 +113,7 @@ function model_summary(
             end
 
             sd_draws = draws(TR, Symbol(group, "_sd"); drop_draws=drop_draws, collapse=false, kwargs...)
-            effect_names = collect(dims(sd_draws, :effect))
+            effect_names = collect(dims(sd_draws, _effect_dim_name(group)))
             ranef_info = _diagnostics_table(sd_draws, effect_names, funs, func_names_all, quantiles)
             pretty_table(
                 io,

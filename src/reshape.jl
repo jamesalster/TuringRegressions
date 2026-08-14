@@ -10,9 +10,39 @@ _select_param(raw::DimArray, root::Symbol) = raw[param=findall(==(root), getsym.
 
 # DimStack requires a dim NAME to have one length across all layers, so two ranef terms
 # with different level counts (e.g. nested `a/b` grouping) can't both use a literal
-# `:group` dim. Give each term's group axis a unique name instead; `draws(TR, type)`
-# (parametermethods.jl) renames it back to `:group` on the single-layer array it returns.
-_group_dim_name(group) = Symbol(:group_, group)
+# `:group` dim. Give each term's group axis a unique name instead, derived from the LAYER
+# key (not the grouping variable), so terms sharing a group get distinct axis names too.
+# `:effect`/`:effect2` need the same treatment: a DimStack keeps ONE lookup per dim name,
+# so two terms whose effect labels differ (`[:Intercept]` vs `[:Days]`) would both report
+# the first term's — silently, when the lengths happen to match. These keyed names are
+# what `draws(TR, type)` hands back too — e.g. `dims(draws(TR, :Subject), :effect__Subject)`.
+# Double underscore (not single) since a key can itself contain `_` (`:Subject_1`).
+_group_dim_name(key) = Symbol(:group__, key)
+_effect_dim_name(key) = Symbol(:effect__, key)
+_effect2_dim_name(key) = Symbol(:effect2__, key)
+
+"""
+    ranef_layer_keys(Z::Vector{RandomEffect}) -> Vector{Symbol}
+
+DimStack layer key for each ranef term. A grouping variable used by exactly one term
+keeps its bare name (`:Subject`); when several terms share a group — `(1|g) + (0+x|g)`,
+the lme4/brms spelling for uncorrelated intercept and slope, and the only one this
+package offers — each gets a positional suffix (`:g_1`, `:g_2`). Without that, the
+later term's layers overwrite the earlier term's on `merge` and its effects vanish
+from every prediction.
+
+Every consumer of a ranef layer (reshape, unstandardise, predict, summary) must key off
+this, and index-align with `md.Z`.
+"""
+function ranef_layer_keys(Z::Vector{RandomEffect})
+    vars = [re.variable for re in Z]
+    seen = Dict{Symbol,Int}()
+    return map(vars) do v
+        count(==(v), vars) == 1 && return v # sole user of the group: bare name, public API unchanged
+        seen[v] = get(seen, v, 0) + 1       # else number them in formula order
+        Symbol(v, :_, seen[v])
+    end
+end
 
 # Unflatten the trailing (raw) idx dim of `sub` (dims :iter, :chain, :idx) into `shape`,
 # relying on FlexiChains preserving the sampled container's column-major element order.
@@ -92,13 +122,12 @@ function _fixef_layer(raw::DimArray, md::ModelData, family::Type{<:Distribution}
     return DimArray(fixef, (Dim{:fixef}(names), Dim{:iter}(1:ndraw), Dim{:chain}(1:nchain)))
 end
 
-# One ranef term's layers, keyed on the sampled positional index `i` (model.jl's
-# σ_z_<i>/L_z_<i>/r_z_<i>), returned relabelled under the real group variable name.
+# One ranef term's layers, read off the sampled positional index `i` (model.jl's
+# σ_z_<i>/L_z_<i>/r_z_<i>), returned relabelled under this term's layer `key`.
 #
 # The per-group effects are rebuilt here: the Turing model code assigns its ranef
 # matrix with `=` rather than `~`, so only the σ/L/z pieces are ever sampled and stored.
-function _ranef_layers(raw::DimArray, i::Int, ranef::RandomEffect)
-    group = ranef.variable
+function _ranef_layers(raw::DimArray, i::Int, ranef::RandomEffect, key::Symbol)
     n_groups = length(ranef.levels) # e.g. number of distinct Subjects
     names = _effect_names(ranef)
     n = length(names)               # effects per group: 1 (intercept only), or 1+slopes
@@ -123,17 +152,17 @@ function _ranef_layers(raw::DimArray, i::Int, ranef::RandomEffect)
             R[:, :, d, c] = L[:, :, d, c] * L[:, :, d, c]' # L·L' undoes the Cholesky split
         end
         return (;
-            Symbol(group) => DimArray(M, (Dim{:effect}(names), Dim{_group_dim_name(group)}(ranef.levels), draw_chain...)),
-            Symbol(group, "_sd") => DimArray(σz, (Dim{:effect}(names), draw_chain...)),
-            Symbol(group, "_corr") => DimArray(R, (Dim{:effect}(names), Dim{:effect2}(names), draw_chain...)),
+            key => DimArray(M, (Dim{_effect_dim_name(key)}(names), Dim{_group_dim_name(key)}(ranef.levels), draw_chain...)),
+            Symbol(key, "_sd") => DimArray(σz, (Dim{_effect_dim_name(key)}(names), draw_chain...)),
+            Symbol(key, "_corr") => DimArray(R, (Dim{_effect_dim_name(key)}(names), Dim{_effect2_dim_name(key)}(names), draw_chain...)),
         )
     else
         # Effects independent (intercept-only or slope-only): just scale unit draws by σz.
         # The reshape inserts a length-1 group axis so σz broadcasts across every group.
         M = reshape(σz, n, 1, ndraw, nchain) .* r
         return (;
-            Symbol(group) => DimArray(M, (Dim{:effect}(names), Dim{_group_dim_name(group)}(ranef.levels), draw_chain...)),
-            Symbol(group, "_sd") => DimArray(σz, (Dim{:effect}(names), draw_chain...)),
+            key => DimArray(M, (Dim{_effect_dim_name(key)}(names), Dim{_group_dim_name(key)}(ranef.levels), draw_chain...)),
+            Symbol(key, "_sd") => DimArray(σz, (Dim{_effect_dim_name(key)}(names), draw_chain...)),
         )
     end
 end
@@ -143,13 +172,14 @@ end
 
 Split the flat `VarName`-keyed sampler output (`DimArray(TR.samples)`) into named,
 standardised-scale layers: `:fixef` (α, β, aux, in that order), and per ranef term a
-`:{group}` matrix (`:effect` × `:group`) plus its `:{group}_sd` / `:{group}_corr`
-companions. Pure structural reshuffle — no rescaling, see `unstandardise`.
+`:{key}` matrix (`:effect` × `:group`) plus its `:{key}_sd` / `:{key}_corr`
+companions, where `key` comes from `ranef_layer_keys`. Pure structural reshuffle — no
+rescaling, see `unstandardise`.
 """
 function reshape_params(raw::DimArray, md::ModelData, family::Type{<:Distribution})
     layers = (; fixef=_fixef_layer(raw, md, family))
-    for (i, ranef) in enumerate(md.Z)
-        layers = merge(layers, _ranef_layers(raw, i, ranef))
+    for (i, (ranef, key)) in enumerate(zip(md.Z, ranef_layer_keys(md.Z)))
+        layers = merge(layers, _ranef_layers(raw, i, ranef, key))
     end
     return DimStack(layers)
 end

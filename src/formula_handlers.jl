@@ -62,12 +62,6 @@ function extract_model_data(formula, data, weights=nothing)
     predictors = extract_predictors(fixed_term, d)
     Z = [extract_random_effect(t, d) for t in re_terms]
 
-    vars = [z.variable for z in Z]
-    if length(unique(vars)) < length(vars)
-        dupes = [v for v in unique(vars) if count(==(v), vars) > 1]
-        @warn "Multiple random-effects terms share grouping variable(s) $dupes — their DimStack layers collide, later term overwrites earlier"
-    end
-
     return ModelData(f, y, predictors, Z, weights)
 end
 

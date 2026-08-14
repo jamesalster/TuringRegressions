@@ -1,0 +1,6 @@
+"model","prior","class","coef","group"
+"normal_mtcars_lown","","b","",""
+"normal_mtcars_lown","normal(0, 3.976231465)","b","Cyl",""
+"normal_mtcars_lown","normal(0, 0.06902315912)","b","Disp",""
+"normal_mtcars_lown","normal(19.825, 14.68320779)","Intercept","",""
+"normal_mtcars_lown","exponential(0.3405250455)","sigma","",""

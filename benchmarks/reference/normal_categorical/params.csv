@@ -1,0 +1,6 @@
+"model","variable","kind","group","effect","effect2","level","julia_param","julia_param2","mean","sd","q2.5","q97.5","rhat","ess_bulk"
+"normal_categorical","b_Intercept","fixef","","Intercept","","","α","",3.69642918247187,0.106075834056285,3.48347575569731,3.90459359431432,1.00014999205318,3440.73865904267
+"normal_categorical","b_Speciesversicolor","fixef","","Speciesversicolor","","","Species: versicolor","",-1.57818446188853,0.194735098312237,-1.96825088254315,-1.19296400345949,1.00036539982284,2742.74747447281
+"normal_categorical","b_Speciesvirginica","fixef","","Speciesvirginica","","","Species: virginica","",-2.08256448079389,0.274487836919297,-2.62927469391833,-1.5431267025196,1.00016569923461,2762.32046584793
+"normal_categorical","b_PetalLength","fixef","","PetalLength","","","PetalLength","",0.896154923377514,0.064887194125561,0.768070695184648,1.02623528070268,1.00019461407553,2760.41046623708
+"normal_categorical","sigma","aux","","sigma","","","σ","",0.340075060239252,0.0202512181309702,0.30313087107475,0.381692822375706,1.00056918827292,4435.78593230535

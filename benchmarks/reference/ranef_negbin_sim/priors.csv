@@ -1,0 +1,8 @@
+"model","prior","class","coef","group"
+"ranef_negbin_sim","","b","",""
+"ranef_negbin_sim","normal(0, 2.219283777)","b","X",""
+"ranef_negbin_sim","normal(0, 5)","Intercept","",""
+"ranef_negbin_sim","student_t(3, 0, 2.5)","sd","",""
+"ranef_negbin_sim","","sd","","G"
+"ranef_negbin_sim","exponential(1)","sd","Intercept","G"
+"ranef_negbin_sim","inv_gamma(1, 1)","shape","",""

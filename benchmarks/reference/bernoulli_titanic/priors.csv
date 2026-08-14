@@ -1,0 +1,8 @@
+"model","prior","class","coef","group"
+"bernoulli_titanic","","b","",""
+"bernoulli_titanic","normal(0, 9.216314117)","b","AgeChild",""
+"bernoulli_titanic","normal(0, 5.955677532)","b","Class2nd",""
+"bernoulli_titanic","normal(0, 4.283792346)","b","Class3rd",""
+"bernoulli_titanic","normal(0, 4.07804278)","b","ClassCrew",""
+"bernoulli_titanic","normal(0, 4.879259254)","b","SexMale",""
+"bernoulli_titanic","normal(0, 5)","Intercept","",""

@@ -1,0 +1,7 @@
+"model","prior","class","coef","group"
+"normal_interaction","","b","",""
+"normal_interaction","normal(0, 0.9381600371)","b","PetalLength",""
+"normal_interaction","normal(0, 3.799633771)","b","SepalWidth",""
+"normal_interaction","normal(0, 0.3161991293)","b","SepalWidth:PetalLength",""
+"normal_interaction","normal(5.843333333, 4.14033064)","Intercept","",""
+"normal_interaction","exponential(1.207633021)","sigma","",""

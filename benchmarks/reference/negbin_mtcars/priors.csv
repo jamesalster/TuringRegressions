@@ -1,0 +1,6 @@
+"model","prior","class","coef","group"
+"negbin_mtcars","","b","",""
+"negbin_mtcars","normal(0, 1.119869958)","b","Cyl",""
+"negbin_mtcars","normal(0, 0.01613701047)","b","Disp",""
+"negbin_mtcars","normal(0, 5)","Intercept","",""
+"negbin_mtcars","inv_gamma(1, 1)","shape","",""

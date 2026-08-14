@@ -9,7 +9,7 @@ Design Features:
 
 * Handles Normal, TDist, Bernoulli, Poisson, NegativeBinomial families
 * Fixed and Random effects supported, including varying slopes
-* Models run on standardised scale for performance to ensure correct outputs vs GLM/lme4 (six fits are benchmarked against GLM/lme4 in the test suite, coefficients to within 0.02)
+* Models run on standardised scale for performance as well as to ensure correct outputs vs `brms` (multiple fits are benchmarked against `brms` reference models in the tests)
 * Priors are somewhat customisable, and specified on standardised scale
 * Model code dynamically constructed, can be viewed and exported and also modified manually
 * Sampling performance in NUTS optimised as far as possible; ReverseDiff used for random effect models to improve performance
@@ -217,13 +217,20 @@ Parameter extraction functions accept:
 * `n_draws=Inf` - Number of draws to keep, applied per chain (`Inf` for all)
 * `collapse=true` - Collapse chains into single dimension
 
+## Testing
+
+The test suite checks fitted posteriors against `brms` reference fits, not just internal consistency.
+
+* `benchmarks/brms.R` - Rscript to fit the reference models in R/`brms` and write them to `benchmarks/reference/` (committed). Priors are translated to `brms`'s raw-data scale to match this package's standardised-scale priors; see the comments at the top of the file for the algebra. Re-run with `Rscript benchmarks/brms.R` (all models), a named subset, or `--data-only` to just regenerate `benchmarks/data/` (gitignored).
+* `test/runtests.jl` - Fits the same models in Julia and compares against `benchmarks/reference/`, writing a per-parameter comparison to `benchmarks/report/test_report_<timestamp>.csv`, updated after each model as the run progresses.
+
 ## Thanks
 
 This package was heavily inspired by and uses small snippets of code from TuringGLM. 
 
 This is intended as a front-end package to a large number of others, and depends notably on the Turing.jl and DimensionalData.jl ecosystems.
 
-The original was hand-written but the random-effect implementation, tidying up and docs were co-written with Claude.
+The original was hand-written but the random-effect implementation, tests, tidying up and docs were co-written with Claude.
 
 ## TODO
 

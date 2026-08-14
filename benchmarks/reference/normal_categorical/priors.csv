@@ -1,0 +1,7 @@
+"model","prior","class","coef","group"
+"normal_categorical","","b","",""
+"normal_categorical","normal(0, 0.9381600371)","b","PetalLength",""
+"normal_categorical","normal(0, 3.50145684)","b","Speciesversicolor",""
+"normal_categorical","normal(0, 3.50145684)","b","Speciesvirginica",""
+"normal_categorical","normal(5.843333333, 4.14033064)","Intercept","",""
+"normal_categorical","exponential(1.207633021)","sigma","",""

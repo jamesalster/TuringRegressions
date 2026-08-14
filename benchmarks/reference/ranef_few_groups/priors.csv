@@ -1,0 +1,8 @@
+"model","prior","class","coef","group"
+"ranef_few_groups","","b","",""
+"ranef_few_groups","normal(0, 3.454083024)","b","X",""
+"ranef_few_groups","normal(0.980574275, 7.432290699)","Intercept","",""
+"ranef_few_groups","student_t(3, 0, 2.5)","sd","",""
+"ranef_few_groups","","sd","","G"
+"ranef_few_groups","exponential(0.6727401016)","sd","Intercept","G"
+"ranef_few_groups","exponential(0.6727401016)","sigma","",""

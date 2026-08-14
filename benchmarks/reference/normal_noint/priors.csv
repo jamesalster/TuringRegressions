@@ -1,0 +1,5 @@
+"model","prior","class","coef","group"
+"normal_noint","","b","",""
+"normal_noint","normal(0, 6.749398063)","b","Cyl",""
+"normal_noint","normal(0, 0.09725692382)","b","Disp",""
+"normal_noint","exponential(0.1659214567)","sigma","",""

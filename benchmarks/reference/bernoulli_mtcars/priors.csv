@@ -1,0 +1,5 @@
+"model","prior","class","coef","group"
+"bernoulli_mtcars","","b","",""
+"bernoulli_mtcars","normal(0, 1.119869958)","b","Cyl",""
+"bernoulli_mtcars","normal(0, 0.01613701047)","b","Disp",""
+"bernoulli_mtcars","normal(0, 5)","Intercept","",""

@@ -1,0 +1,5 @@
+"model","prior","class","coef","group"
+"weighted_normal","","b","",""
+"weighted_normal","normal(0, 0.09725692382)","b","Disp",""
+"weighted_normal","normal(20.090625, 30.13474026)","Intercept","",""
+"weighted_normal","exponential(0.1659214567)","sigma","",""

@@ -1,0 +1,8 @@
+"model","prior","class","coef","group"
+"ranef_slope_sleep","","b","",""
+"ranef_slope_sleep","normal(0, 39.1132094)","b","Days_c",""
+"ranef_slope_sleep","normal(298.5078917, 281.6437856)","Intercept","",""
+"ranef_slope_sleep","student_t(3, 0, 59.3)","sd","",""
+"ranef_slope_sleep","","sd","","Subject"
+"ranef_slope_sleep","exponential(0.05113362034)","sd","Days_c","Subject"
+"ranef_slope_sleep","exponential(0.01775292144)","sigma","",""

@@ -1,0 +1,6 @@
+"model","variable","kind","group","effect","effect2","level","julia_param","julia_param2","mean","sd","q2.5","q97.5","rhat","ess_bulk"
+"normal_interaction","b_Intercept","fixef","","Intercept","","","α","",1.48884140300219,0.529044332553746,0.490229793425998,2.56099680329028,1.00230299122959,2782.13445545831
+"normal_interaction","b_SepalWidth","fixef","","SepalWidth","","","SepalWidth","",0.824687747614591,0.157282568458742,0.505278257781634,1.12482011162291,1.00240942874906,2742.97745206026
+"normal_interaction","b_PetalLength","fixef","","PetalLength","","","PetalLength","",0.694386065924966,0.138086374483545,0.41440258441949,0.964762319299339,1.0022052904238,2686.31122118808
+"normal_interaction","b_SepalWidth:PetalLength","fixef","","SepalWidth:PetalLength","","","SepalWidth & PetalLength","",-0.0695756291158261,0.0428815326437813,-0.153185084899126,0.0167525946629461,1.00218406100343,2709.52364480161
+"normal_interaction","sigma","aux","","sigma","","","σ","",0.333203945662653,0.0200446592560785,0.296249580827,0.374867117809204,1.00193367577242,4341.59091228109

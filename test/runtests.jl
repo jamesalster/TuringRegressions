@@ -1,7 +1,16 @@
-# How to run (from the package root):
-#   julia --project=. -e 'using Pkg; Pkg.test()'                       # standard, ~5 min
-#   TR_TEST_LEVEL=fast julia --project=. -e 'using Pkg; Pkg.test()'    # ~2 min
-#   TR_TEST_LEVEL=benchmarks julia --project=. -e 'using Pkg; Pkg.test()'  # ~8 min
+# How to run (from the package root). ALWAYS pass `--depwarn=no`: Pkg.test hardcodes
+# `--depwarn=yes` on the test worker, and something in the Turing/AD hot path calls a
+# deprecated method, so every deprecation warning walks a backtrace to name its caller.
+# Measured on normal_iris at the benchmark budget: 2.1s -> 42.9s per fit, a 20x tax on
+# the whole suite. `julia_args` is appended after Pkg's own flags, so it wins.
+#   julia --project=. -e 'using Pkg; Pkg.test(julia_args=`--depwarn=no`)'                       # standard, ~5 min
+#   TR_TEST_LEVEL=fast julia --project=. -e 'using Pkg; Pkg.test(julia_args=`--depwarn=no`)'    # ~2 min
+#   TR_TEST_LEVEL=benchmarks julia --project=. -e 'using Pkg; Pkg.test(julia_args=`--depwarn=no`)'  # ~8 min
+#   TR_TEST_LEVEL=benchmarks_full julia --project=. -e 'using Pkg; Pkg.test(julia_args=`--depwarn=no`)'  # ~60 min
+# The benchmark levels compare full-budget fits against the stored brms reference in
+# benchmarks/reference/ — generate it once with `Rscript benchmarks/brms.R`, and the
+# (gitignored) datasets with `Rscript benchmarks/brms.R --data-only`.
+# TR_BENCH_MODELS=name1,name2 restricts the benchmark to named cases.
 # Always via Pkg.test(), never `julia --project=. test/runtests.jl` — Pkg.test()
 # resolves the test deps in an isolated env, which is what CI and users get.
 # Levels are defined below.
@@ -19,8 +28,14 @@ using LinearAlgebra: diag
 using CairoMakie
 CairoMakie.activate!()
 using PrettyTables
+using CSV
 
 const TR = TuringRegressions
+
+# Silent 20x slowdown if this is missed, so say it loudly rather than let a run crawl.
+Base.JLOptions().depwarn == 0 || @warn """
+    Running with deprecation warnings on — fits will be ~20x slower.
+    Re-run as: julia --project=. -e 'using Pkg; Pkg.test(julia_args=`--depwarn=no`)'"""
 
 Random.seed!(1)
 
@@ -29,10 +44,11 @@ Random.seed!(1)
 # by which fits they pay for. Each level is a superset of the one before:
 #   fast     — no-MCMC unit tests + two small fixed-effect fits      (~2 min)
 #   standard — + other families, random effects, weights, LOO, plots (~5 min)
-#   benchmarks — + full-budget fits benchmarked against GLM / lme4   (~8 min)
+#   benchmarks — + full-budget fits vs the brms reference, core cases  (~8 min)
+#   benchmarks_full — + every brms reference case, repeat seeds on the core (~60 min)
 # Times are totals for that level, not increments.
 # `TR_TEST_LEVEL=fast julia --project=. -e 'using Pkg; Pkg.test()'`
-const LEVELS = (:fast, :standard, :benchmarks)
+const LEVELS = (:fast, :standard, :benchmarks, :benchmarks_full)
 const LEVEL = Symbol(get(ENV, "TR_TEST_LEVEL", "standard"))
 LEVEL ∈ LEVELS || error("TR_TEST_LEVEL must be one of $LEVELS, got :$LEVEL")
 atleast(level::Symbol) = findfirst(==(LEVEL), LEVELS) ≥ findfirst(==(level), LEVELS)
@@ -41,7 +57,10 @@ atleast(level::Symbol) = findfirst(==(LEVEL), LEVELS) ≥ findfirst(==(level), L
 # editing tests. BENCH_SAMPLES/BENCH_WARMUP are TOTALS across chains (the `fit!` API).
 const BENCH_SAMPLES = parse(Int, get(ENV, "TR_BENCH_SAMPLES", "2000"))
 const BENCH_WARMUP = parse(Int, get(ENV, "TR_BENCH_WARMUP", "2000"))
-const BENCH_NCHAINS = parse(Int, get(ENV, "TR_BENCH_NCHAINS", "2"))
+const BENCH_NCHAINS = parse(Int, get(ENV, "TR_BENCH_NCHAINS", "4"))
+
+# Plain libc formatting — avoids pulling the Dates stdlib into the test env
+const RUN_STARTED = Libc.strftime("%Y-%m-%dT%H:%M:%S", time())
 
 @info "Setting up tests" level = LEVEL
 
@@ -88,42 +107,347 @@ function fitmodel(formula, data, family; seed=123, kwargs...)
     return mod
 end
 
-# Benchmark table: posterior mean vs canonical (GLM MLE / lme4 REML), :benchmarks only —
-# a running record of how tight our tolerances actually are, not just whether they pass.
-const BENCHMARK_ROWS = NamedTuple[]
-
-function record_benchmark!(model_name, param_name, ours, canonical)
-    push!(
-        BENCHMARK_ROWS,
-        (
-            model=model_name,
-            param=param_name,
-            ours=round(ours; digits=3),
-            canonical=round(canonical; digits=3),
-            abs_err=round(abs(ours - canonical); digits=3),
-            rel_err_pct=round(100 * abs(ours - canonical) / max(abs(canonical), 1e-8); digits=1),
-        ),
-    )
-end
-
-# Prediction table: worst-row epred error against the canonical fit, next to the tolerance
-# actually asserted. Printed so pred_atol can be set from measurement rather than guessed —
-# a tolerance 100× the observed error is not testing anything.
+# Prediction table: worst-row epred error against the brms reference, in units of the
+# reference's own posterior SD, next to the tolerance actually asserted. Printed so the
+# tolerances can be set from measurement rather than guessed — a tolerance 100x the
+# observed error is not testing anything.
 const PRED_ROWS = NamedTuple[]
 
-function record_pred!(model_name, max_abs_err, tol)
+function record_pred!(model_name, max_err_sds, tol)
     push!(PRED_ROWS, (
         model=model_name,
-        max_abs_err=round(max_abs_err; digits=4),
+        max_err_sds=round(max_err_sds; digits=4),
         tol=tol,
-        headroom=round(tol / max(max_abs_err, 1e-8); digits=1),
+        headroom=round(tol / max(max_err_sds, 1e-8); digits=1),
+        pass=max_err_sds < tol,
     ))
 end
 
-# Fit-time table: wall-clock seconds per full-budget fit. The first recorded fit eats
-# TTFX compile, so read the first row as an upper bound, not a like-for-like.
+# Fit-time table: wall-clock seconds per full-budget fit, against the Stan sampling
+# time recorded for the same model. NOT a like-for-like benchmark — brms runs 4 chains
+# x 2000 kept draws to our BENCH_NCHAINS x BENCH_SAMPLES, and the first Julia fit eats
+# TTFX compile, so read `seconds` on row 1 as an upper bound and the ratio as an order
+# of magnitude, not a score.
 const TIMING_ROWS = NamedTuple[]
-record_timing!(model_name, seconds) = push!(TIMING_ROWS, (model=model_name, seconds=round(seconds; digits=1)))
+
+function record_timing!(model_name, seconds; brms_seconds=missing)
+    push!(TIMING_ROWS, (
+        model=model_name,
+        seconds=round(seconds; digits=1),
+        brms_seconds=brms_seconds,
+        vs_brms=ismissing(brms_seconds) ? missing : round(seconds / max(brms_seconds, 1e-8); digits=2),
+    ))
+end
+
+# --- brms benchmark machinery ------------------------------------------------
+# Definitions only; the testset that uses them is at the bottom of the file, which
+# is also where the rationale for benchmarking against brms is written down. They
+# live out here because `const` cannot be declared inside the `try`/`@testset`
+# below — those bodies are local scopes.
+if atleast(:benchmarks)
+
+const BENCH_DIR = joinpath(@__DIR__, "..", "benchmarks")
+
+# `TR_BENCH_MODELS=normal_iris,ranef_corr_sleep` runs just those cases — the
+# one-model-at-a-time loop used while chasing a specific disagreement.
+const BENCH_ONLY = let v = get(ENV, "TR_BENCH_MODELS", "")
+    isempty(v) ? nothing : Set(split(v, ','))
+end
+
+# Reference rows for one model, or a loud failure naming the command that makes them.
+function brms_reference(name, file)
+    path = joinpath(BENCH_DIR, "reference", name, file)
+    isfile(path) || error("""
+        No brms reference at $path.
+        Generate it first (one Stan compile per model, ~1 min each):
+            Rscript benchmarks/brms.R $name""")
+    df = CSV.read(path, DataFrame)
+    isempty(df) && error("$path is empty")
+    return df
+end
+
+# The datasets live under benchmarks/data/ (gitignored, written by the same R script)
+# so that both tools fit byte-identical data — factor level order included, which is
+# where R and StatsModels disagree by default.
+function brms_data(name, string_cols)
+    path = joinpath(BENCH_DIR, "data", "$name.csv")
+    isfile(path) || error("""
+        Missing dataset $path. Rebuild the benchmark data (fast, no fits):
+            Rscript benchmarks/brms.R --data-only""")
+    # Grouping levels like Subject "308" would otherwise be read as Int, and then no
+    # longer match the level labels brms reported.
+    types = Dict(c => String for c in string_cols)
+    return CSV.read(path, DataFrame; types=types)
+end
+
+# --- Case registry -----------------------------------------------------------
+# One entry per brms reference directory. Tolerances are in units of the REFERENCE
+# POSTERIOR SD (`sd_tol=0.15` ⇒ our posterior mean must sit within 0.15 brms SDs of
+# theirs), which is scale-free: it means the same thing for an intercept of 250 and a
+# correlation of 0.07, and it stays honest when a parameter is genuinely uncertain.
+# Two correct samplers differ here only by Monte Carlo error, so these bounds are
+# tight by design — loosen one ONLY with a measured number and a reason in the comment.
+# `extra` is a `(label, mod) -> nothing` hook run on the same fit after the brms
+# comparisons — for assertions brms cannot express, such as an absolute ceiling.
+function case(name, data, formula, family;
+              priors=nothing, weights=nothing, string_cols=String[],
+              core=false, repeats=1, sd_tol=0.15, pred_sd_tol=0.15,
+              kind_tol=Dict{String,Float64}(), skip_kinds=String[], extra=nothing)
+    return (; name, data, formula, family, priors, weights, string_cols,
+            core, repeats, sd_tol, pred_sd_tol, kind_tol, skip_kinds, extra)
+end
+
+# The pre-brms benchmark, kept verbatim as an absolute floor under the raw-`Days`
+# case. brms is the oracle for agreement between the two tools; these numbers are
+# published lme4 REML estimates, so they also pin down the ABSOLUTE size of the
+# V26 group-level inflation, which a tolerance measured in brms SDs cannot.
+function check_sleepstudy_lme4(label, mod)
+    fixef = Array(draws(mean, mod, :fixef))
+    # fixef recover lme4 REML closely — measured error across seeds is <=0.33 and
+    # <=0.08, so atol=1 is a real regression check, not a rubber stamp
+    @test isapprox(fixef[1], 251.4, atol=1)
+    @test isapprox(fixef[2], 10.5, atol=1)
+
+    subject_sd = draws(mean, mod, :Subject_sd)
+    int_sd = subject_sd[_idx(subject_sd, 1, "Intercept", "Subject_sd")]
+    days_sd = subject_sd[_idx(subject_sd, 1, "Days", "Subject_sd")]
+    # KNOWN ISSUE — intercept SD comes out ~29 against lme4's 24.7, consistently
+    # across seeds (measured: 28.8-29.2), so it is bias not noise. The LKJ prior is
+    # flat on the STANDARDISED-scale correlation, which shrinks the correlation and
+    # pushes the intercept SD up to compensate. Bounded rather than point-checked:
+    # it must stay under 30, so the known inflation cannot silently get worse.
+    @test 22 < int_sd < 30
+    @test isapprox(days_sd, 5.9, atol=1)
+end
+
+const BRMS_CASES = [
+    # -- fixed effects, one per family ----------------------------------------
+    # `core` cases run at :benchmarks; everything else needs :benchmarks_full.
+    # `repeats` refits with different seeds — for the three shapes most of the
+    # package rests on, one lucky seed must not be able to pass the suite.
+    case("normal_iris", "iris", @formula(SepalLength ~ SepalWidth + PetalLength), Normal;
+         core=true, repeats=3),
+    case("normal_mtcars", "mtcars", @formula(MPG ~ Cyl + Disp), Normal),
+    case("normal_mtcars_lown", "mtcars_lown", @formula(MPG ~ Cyl + Disp), Normal),
+    # The lown trio shares one dataset and differs only in the fixef prior, so it
+    # isolates prior handling from likelihood handling: if the standardised-scale
+    # prior were being translated wrongly, only these three would move.
+    case("normal_mtcars_lown_wide", "mtcars_lown", @formula(MPG ~ Cyl + Disp), Normal;
+         priors=default_prior(Normal; fixed_effects=Normal(0, 10))),
+    case("normal_mtcars_lown_tight", "mtcars_lown", @formula(MPG ~ Cyl + Disp), Normal;
+         priors=default_prior(Normal; fixed_effects=Normal(0, 0.25))),
+    # No intercept: turing_glm warns here (the slopes carry the mean of y and the
+    # standardised-scale prior shrinks them), and the warning is the licence for the
+    # looser bound — brms is fitted with the translated prior but the two disagree
+    # on nothing else, so this stays a real check, just a blunter one.
+    case("normal_noint", "mtcars", @formula(MPG ~ 0 + Cyl + Disp), Normal;
+         sd_tol=0.4, pred_sd_tol=0.4),
+    case("normal_interaction", "iris", @formula(SepalLength ~ SepalWidth * PetalLength), Normal),
+    case("normal_categorical", "iris", @formula(SepalLength ~ Species + PetalLength), Normal),
+    # ν is weakly identified on clean data: its posterior is wide, so 0.15 SDs is a
+    # small absolute distance and there is no case for loosening.
+    case("student_iris", "iris", @formula(SepalLength ~ SepalWidth + PetalLength), TDist),
+    case("student_mtcars", "mtcars", @formula(MPG ~ Cyl + Disp), TDist),
+    case("bernoulli_titanic", "titanic", @formula(Survived ~ Class + Sex + Age), Bernoulli;
+         core=true, repeats=3),
+    case("bernoulli_mtcars", "mtcars", @formula(Binom ~ Cyl + Disp), Bernoulli),
+    case("poisson_mtcars", "mtcars", @formula(HP ~ Cyl + Disp), Poisson),
+    case("negbin_mtcars", "mtcars", @formula(HP ~ Cyl + Disp), NegativeBinomial),
+
+    # -- random effects, term shapes ------------------------------------------
+    case("ranef_int_sleep", "sleepstudy", @formula(Reaction ~ Days_c + (1 | Subject)), Normal;
+         string_cols=["Subject"]),
+    case("ranef_slope_sleep", "sleepstudy", @formula(Reaction ~ Days_c + (0 + Days_c | Subject)), Normal;
+         string_cols=["Subject"]),
+    case("ranef_corr_sleep", "sleepstudy", @formula(Reaction ~ Days_c + (1 + Days_c | Subject)), Normal;
+         string_cols=["Subject"], core=true, repeats=3),
+    # DELIBERATE MISMATCH (V26): with raw Days the group-level design matrix is not
+    # mean-zero, so our LKJ sits on the correlation at centred Days and brms's on the
+    # correlation at Days=0 — genuinely different priors. Population coefficients are
+    # unaffected and stay tight; the group-level spread is expected to disagree and is
+    # bounded loosely so the KNOWN gap cannot silently widen.
+    case("ranef_corr_sleep_raw", "sleepstudy", @formula(Reaction ~ Days + (1 + Days | Subject)), Normal;
+         string_cols=["Subject"],
+         kind_tol=Dict("ranef_sd" => 4.0, "ranef_cor" => 4.0, "ranef_coef" => 1.0),
+         pred_sd_tol=0.4, extra=check_sleepstudy_lme4, core=true),
+    case("ranef_uncorr_sleep", "sleepstudy",
+         @formula(Reaction ~ Days_c + (1 | Subject) + (0 + Days_c | Subject)), Normal;
+         string_cols=["Subject"]),
+    case("ranef_nested_sleep", "sleepstudy", @formula(Reaction ~ Days_c + (1 | Batch / Subject)), Normal;
+         string_cols=["Subject", "Batch"]),
+    case("ranef_crossed", "sim_crossed", @formula(Y ~ X + (1 | G1) + (1 | G2)), Normal),
+    case("ranef_three_effects", "sim_three_effects", @formula(Y ~ X1 + X2 + (1 + X1 + X2 | G)), Normal),
+    case("ranef_unbalanced", "sim_unbalanced", @formula(Y ~ X + (1 | G)), Normal),
+    case("ranef_few_groups", "sim_few_groups", @formula(Y ~ X + (1 | G)), Normal),
+
+    # -- random effects × non-Normal families ---------------------------------
+    case("ranef_poisson_cbpp", "cbpp", @formula(Incidence ~ Period + (1 | Herd)), Poisson;
+         string_cols=["Herd", "Period"]),
+    case("ranef_bernoulli_cbpp", "cbpp_bernoulli", @formula(Y ~ Period + (1 | Herd)), Bernoulli;
+         string_cols=["Herd", "Period"]),
+    case("ranef_negbin_sim", "sim_negbin_re", @formula(Y ~ X + (1 | G)), NegativeBinomial),
+
+    # -- weights ---------------------------------------------------------------
+    case("weighted_normal", "mtcars_weighted", @formula(MPG ~ Disp), Normal; weights="w"),
+]
+
+# --- Comparison machinery ----------------------------------------------------
+
+# brms row → the same quantity in our own posterior means. Dim names are per-layer
+# (`effect__Subject_1` and friends), so index by position and match on printed dim
+# values instead of guessing the name.
+_dimvals(v, d) = string.(collect(dims(v)[d]))
+
+function _idx(v, d, want, what)
+    i = findfirst(==(want), _dimvals(v, d))
+    isnothing(i) && error("$what: no '$want' in dim $d, have $(_dimvals(v, d))")
+    return i
+end
+
+# `(1|g) + (0+x|g)` is two layers here (`:g_1`, `:g_2`) but one group in brms, so the
+# layer carrying a given effect has to be looked up rather than named.
+function _ranef_layer(mod, group, suffix, effect)
+    pattern = Regex("^" * group * "(_\\d+)?" * suffix * "\$")
+    for key in propertynames(mod.parameters)
+        occursin(pattern, string(key)) || continue
+        # dropdims=false: a single-coefficient term (e.g. intercept-only `(1|G)`) has an
+        # effect dim of length 1, which the package's default dropdims=true would squeeze
+        # away entirely, leaving a 0-dimensional array `_dimvals` can't index into.
+        v = draws(mean, mod, key; dropdims=false)
+        isnothing(findfirst(==(effect), _dimvals(v, 1))) && continue
+        return v
+    end
+    error("no layer matching $pattern carries effect '$effect'; layers: $(propertynames(mod.parameters))")
+end
+
+function ours_for(mod, r)
+    if r.kind == "fixef" || r.kind == "aux"
+        v = draws(mean, mod, :fixef)
+        return v[_idx(v, 1, r.julia_param, r.variable)]
+    elseif r.kind == "ranef_sd"
+        v = _ranef_layer(mod, r.group, "_sd", r.julia_param)
+        return v[_idx(v, 1, r.julia_param, r.variable)]
+    elseif r.kind == "ranef_cor"
+        v = _ranef_layer(mod, r.group, "_corr", r.julia_param)
+        return v[_idx(v, 1, r.julia_param, r.variable), _idx(v, 2, r.julia_param2, r.variable)]
+    elseif r.kind == "ranef_coef"
+        v = _ranef_layer(mod, r.group, "", r.julia_param)
+        return v[_idx(v, 1, r.julia_param, r.variable), _idx(v, 2, string(r.level), r.variable)]
+    end
+    error("unknown reference row kind '$(r.kind)' for $(r.variable)")
+end
+
+# Errors in reference-SD units, recorded next to the bound asserted so the tables show
+# how much headroom each tolerance actually has (see the printout in `finally`).
+const BRMS_ROWS = NamedTuple[]
+
+function record_brms!(label, r, ours, tol)
+    err = abs(ours - r.mean)
+    err_sds = err / max(r.sd, 1e-12)
+    push!(BRMS_ROWS, (
+        model=label, kind=r.kind, param=r.variable,
+        ours=round(ours; digits=3), brms=round(r.mean; digits=3),
+        brms_sd=round(r.sd; digits=4),
+        abs_err=round(err; digits=4),
+        err_sds=round(err_sds; digits=3),
+        tol_sds=tol,
+        pass=err_sds < tol,
+        brms_rhat=round(r.rhat; digits=4),
+        brms_ess_bulk=round(r.ess_bulk; digits=0),
+    ))
+end
+
+function check_params_against_brms(label, name, mod, c)
+    ref = brms_reference(name, "params.csv")
+    for r in eachrow(ref)
+        r.kind in c.skip_kinds && continue
+        # brms reports NegBin `shape`; we sample ϕ = 1/shape, and brms.R emits the
+        # derived `phi` row for exactly this comparison. Skip the untransformed twin.
+        r.kind == "aux" && r.effect == "shape" && continue
+        tol = get(c.kind_tol, r.kind, c.sd_tol)
+        ours = ours_for(mod, r)
+        record_brms!(label, r, ours, tol)
+        @test abs(ours - r.mean) < tol * r.sd
+    end
+    # A reference that silently lost its group-level rows would make this testset
+    # pass on fixef alone, so assert the shapes we expect are present at all.
+    if occursin("ranef", name)
+        @test any(ref.kind .== "ranef_sd")
+        @test any(ref.kind .== "ranef_coef")
+    end
+end
+
+# Predictions are checked for EVERY case, not just the fixed-effect ones: the ranef
+# back-transform and the group-level lookup in `predict.jl` are the parts most likely
+# to be subtly wrong while every parameter still matches.
+function check_predictions_against_brms(label, name, mod, c)
+    ref = brms_reference(name, "predictions.csv")
+    ours = Array(posterior_predict(mean, mod; type=:epred))
+    errs = abs.(ours[ref.row] .- ref.epred_mean) ./ max.(ref.epred_sd, 1e-12)
+    worst = maximum(errs)
+    record_pred!(label, worst, c.pred_sd_tol)
+    @test worst < c.pred_sd_tol
+end
+
+# One long-format CSV per test run, holding everything the three printed tables show:
+# every parameter comparison, every prediction comparison and every fit time, with the
+# tolerance and pass/fail beside it. Long format because the three have different
+# columns and a single file is what actually gets read, diffed and mailed around.
+# Overwritten each run and gitignored — the committed artifact is the brms reference,
+# not our own results.
+function write_benchmark_report()
+    dir = joinpath(BENCH_DIR, "report")
+    mkpath(dir)
+    stamp = replace(RUN_STARTED, ":" => "-")  # colon-free for filesystem safety
+    path = joinpath(dir, "test_report_$stamp.csv")
+
+    rows = vcat(
+        DataFrame(BRMS_ROWS),
+        DataFrame(PRED_ROWS),
+        DataFrame(TIMING_ROWS);
+        cols=:union,  # each table contributes its own columns, rest filled missing
+        source=:row_type => ["param", "prediction", "timing"],
+    )
+    insertcols!(rows,
+        1, :run_started => RUN_STARTED, :level => String(LEVEL),
+        :samples => BENCH_SAMPLES, :nchains => BENCH_NCHAINS,
+    )
+    CSV.write(path, rows)
+
+    n_fail = count(x -> !ismissing(x) && !x, rows.pass)
+    println()
+    println("Wrote $(nrow(rows))-row report to $path  ($n_fail comparison(s) over tolerance)")
+end
+
+# Full budget, one seed per repeat. Seeds are fixed, not random: a benchmark that
+# fails must be reproducible from the printed label alone.
+const BENCH_SEEDS = (123, 456, 789)
+
+function run_brms_case(c)
+    n_reps = atleast(:benchmarks_full) ? c.repeats : 1
+    data = brms_data(c.data, c.string_cols)
+    priors = isnothing(c.priors) ? default_prior(c.family) : c.priors
+    weights = isnothing(c.weights) ? nothing : Float64.(data[!, c.weights])
+
+    brms_seconds = only(brms_reference(c.name, "model.csv").stan_seconds)
+
+    for rep in 1:n_reps
+        label = n_reps == 1 ? c.name : "$(c.name) [seed $(BENCH_SEEDS[rep])]"
+        @testset "$label" begin
+            Random.seed!(BENCH_SEEDS[rep])
+            mod = turing_glm(c.formula, data, c.family; priors=priors, weights=weights)
+            seconds = @elapsed @suppress fit!(
+                mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true
+            )
+            record_timing!(label, seconds; brms_seconds=brms_seconds)
+            check_params_against_brms(label, c.name, mod, c)
+            check_predictions_against_brms(label, c.name, mod, c)
+            isnothing(c.extra) || c.extra(label, mod)
+        end
+    end
+end
+
+end # atleast(:benchmarks) — definitions
 
 try # keep going through sibling testsets on failure, still print the benchmark table
 @testset "TuringRegressions" begin
@@ -231,7 +555,7 @@ end
 
 @testset "Priors" begin
     @test default_prior(Normal).auxiliary == Exponential(1)
-    @test default_prior(TDist).auxiliary == Gamma(2, 0.1)
+    @test default_prior(TDist).auxiliary == truncated(Gamma(2, 10); lower=1)
     @test default_prior(Bernoulli).intercept == Normal(0, 5)
     @test_throws ErrorException default_prior(Gamma)
 
@@ -479,6 +803,30 @@ end
     # a deliberately under-sampled fit must trip the diagnostics
     @suppress fit!(mod; samples=50, warmup=50, nchains=1, quiet=true)
     @test_logs (:warn,) match_mode = :any model_warnings(mod)
+end
+
+# The suite as a whole runs with --depwarn=no (see the header): something in the AD hot
+# path is deprecated, and each warning walks a backtrace to name its caller, which costs
+# ~20x per fit. So run ONE short fit with warnings on, in its own process, and keep the
+# signal. Fails only on deprecations raised from our own src — upstream's are printed
+# but not our problem to fix.
+@testset "Deprecations" begin
+    script = """
+    using TuringRegressions, RDatasets, StatsModels
+    mtcars = dataset("datasets", "mtcars")
+    mod = turing_glm(@formula(MPG ~ Cyl + Disp), mtcars, Normal)
+    fit!(mod; samples=20, warmup=20, nchains=1, quiet=true)
+    """
+    errbuf = IOBuffer()
+    cmd = `$(Base.julia_cmd()) --project=$(Base.active_project()) --startup-file=no --depwarn=yes -e $script`
+    ok = success(pipeline(cmd; stdout=devnull, stderr=errbuf))
+    @test ok
+
+    log = String(take!(errbuf))
+    deprecations = filter(l -> occursin("deprecated", l), split(log, '\n'))
+    isempty(deprecations) || @info "Deprecations seen during a fit" join(deprecations, '\n')
+    # pkgdir gives the package root; a warning naming it came from our code, not a dep
+    @test !any(l -> occursin(pkgdir(TR), l), deprecations)
 end
 
 # =============================================================================
@@ -782,103 +1130,30 @@ end
 end # atleast(:standard)
 
 # =============================================================================
-# :benchmarks only — full sampling budget, tight tolerances against GLM / lme4.
+# :benchmarks / :benchmarks_full — full sampling budget against the stored brms
+# reference in benchmarks/reference/. brms is the ONLY oracle here: it is the tool
+# this package is trying to be a Julia equivalent of, it is fitted on the same data
+# with priors translated to the raw scale (benchmarks/brms.R), and unlike GLM/lme4
+# point estimates it gives a reference for the whole posterior — SDs, correlations,
+# per-level effects and predictions included.
 # =============================================================================
 
 if atleast(:benchmarks)
 
-# Fits at the full budget and records timing; returns the fitted model.
-function benchfit(name, formula, data, family)
-    Random.seed!(123)
-    mod = turing_glm(formula, data, family)
-    seconds = @elapsed @suppress fit!(
-        mod; samples=BENCH_SAMPLES, warmup=BENCH_WARMUP, nchains=BENCH_NCHAINS, quiet=true
-    )
-    record_timing!(name, seconds)
-    return mod
-end
-
-# Posterior mean vs GLM MLE, coefficient by coefficient, recorded for the benchmark table.
-function check_against_glm(name, mod, glm_mod; coef_atol, pred_atol)
-    est = Array(draws(mean, mod, :fixef))
-    n = length(GLM.coef(glm_mod))
-    names = string.(collect(dims(draws(mean, mod, :fixef), :fixef))[1:n])
-    for (param, ours, canonical) in zip(names, est[1:n], GLM.coef(glm_mod))
-        record_benchmark!(name, param, ours, canonical)
+@testset "vs brms reference" begin
+    selected = filter(BRMS_CASES) do c
+        isnothing(BENCH_ONLY) || c.name in BENCH_ONLY
     end
-    # Elementwise max, NOT isapprox: isapprox on vectors compares the L2 norm, so the
-    # same per-row accuracy needs a bigger tolerance on a bigger dataset (√n). Worst
-    # single coefficient / row is the quantity we actually care about.
-    @test maximum(abs, GLM.coef(glm_mod) .- est[1:n]) < coef_atol
+    atleast(:benchmarks_full) || (selected = filter(c -> c.core, selected))
+    isempty(selected) && error("TR_BENCH_MODELS matched no case: $(BENCH_ONLY)")
 
-    ours_pred = Array(posterior_predict(mean, mod; type=:epred))
-    record_pred!(name, maximum(abs, GLM.predict(glm_mod) .- ours_pred), pred_atol)
-    @test maximum(abs, GLM.predict(glm_mod) .- ours_pred) < pred_atol
-end
-
-@testset "Fixed effects vs GLM" begin
-    # V3/V4: posterior mean ≈ MLE, epred ≈ GLM.predict, per family
-    check_against_glm(
-        "Normal (iris)",
-        benchfit("Normal (iris)", @formula(SepalLength ~ SepalWidth + PetalLength), iris, Normal),
-        GLM.lm(@formula(SepalLength ~ SepalWidth + PetalLength), iris);
-        coef_atol=0.02, pred_atol=0.005,  # measured: coef 0.003, epred 0.0012
-    )
-    # No-intercept does NOT recover the MLE and is not meant to: with no intercept the
-    # slopes carry the whole mean of y, so they sit far from 0 and the standardised-scale
-    # Normal(0,2) fixef prior shrinks them (verified: widening to Normal(0,10) lands on the
-    # OLS estimate). turing_glm warns about exactly this (see "Model construction"). Kept as
-    # a sanity check that it is shrunk, not broken — tolerances are deliberately loose.
-    check_against_glm(
-        "Normal no-intercept (mtcars)",
-        benchfit("Normal no-intercept (mtcars)", @formula(MPG ~ 0 + Cyl + Disp), mtcars, Normal),
-        GLM.lm(@formula(MPG ~ 0 + Cyl + Disp), mtcars);
-        coef_atol=1.0, pred_atol=2.0,  # measured: coef 0.334, epred 1.236
-    )
-    check_against_glm(
-        "Poisson (mtcars)",
-        benchfit("Poisson (mtcars)", @formula(HP ~ Cyl + Disp), mtcars, Poisson),
-        GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, Poisson(), GLM.LogLink());
-        coef_atol=0.02, pred_atol=0.5,  # measured: coef 0.002, epred 0.081
-    )
-    check_against_glm(
-        "NegativeBinomial (mtcars)",
-        benchfit("NegativeBinomial (mtcars)", @formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial),
-        GLM.glm(@formula(HP ~ Cyl + Disp), mtcars, NegativeBinomial(), GLM.LogLink());
-        coef_atol=0.02, pred_atol=5.0,  # measured: coef 0.005, epred 2.014
-    )
-    check_against_glm(
-        "Bernoulli (titanic)",
-        benchfit("Bernoulli (titanic)", @formula(Survived ~ Class + Sex + Age), titanic, Bernoulli),
-        GLM.glm(@formula(Survived ~ Class + Sex + Age), titanic, Binomial(), GLM.LogitLink());
-        coef_atol=0.02, pred_atol=0.02,  # measured: coef 0.006, epred 0.0037
-    )
-end
-
-@testset "Random effects vs lme4 — sleepstudy" begin
-    mod = benchfit(
-        "sleepstudy RE (1+Days|Subject)",
-        @formula(Reaction ~ 1 + Days + (1 + Days | Subject)), sleepstudy, Normal,
-    )
-
-    fixef = Array(draws(mean, mod, :fixef))
-    record_benchmark!("sleepstudy RE (lme4 REML)", "Intercept", fixef[1], 251.4)
-    record_benchmark!("sleepstudy RE (lme4 REML)", "Days", fixef[2], 10.5)
-    # fixef recover lme4 REML closely — measured error across seeds is ≤0.33 and ≤0.08,
-    # so atol=1 is a real regression check, not a rubber stamp
-    @test isapprox(fixef[1], 251.4, atol=1)
-    @test isapprox(fixef[2], 10.5, atol=1)
-
-    subject_sd = draws(mean, mod, :Subject_sd)
-    record_benchmark!("sleepstudy RE (lme4 REML)", "Subject_sd[Intercept]", subject_sd[effect=At(:Intercept)], 24.7)
-    record_benchmark!("sleepstudy RE (lme4 REML)", "Subject_sd[Days]", subject_sd[effect=At(:Days)], 5.9)
-    # KNOWN ISSUE — intercept SD comes out ~29 against lme4's 24.7, consistently across
-    # seeds (measured: 28.8-29.2), so it is bias not noise. V26: the LKJ prior is flat on
-    # the STANDARDISED-scale correlation, which shrinks the correlation and pushes the
-    # intercept SD up to compensate. Bounded rather than point-checked: it must stay under
-    # 30, so the known inflation cannot silently get worse.
-    @test 22 < subject_sd[effect=At(:Intercept)] < 30
-    @test isapprox(subject_sd[effect=At(:Days)], 5.9, atol=1)
+    for (i, c) in enumerate(selected)
+        @info "benchmark $i/$(length(selected)): $(c.name)" family = c.family n_reps = (
+            atleast(:benchmarks_full) ? c.repeats : 1
+        )
+        run_brms_case(c)
+        write_benchmark_report()  # overwrite the CSV after each case so a crash mid-run keeps partial results
+    end
 end
 
 end # atleast(:benchmarks)
@@ -888,19 +1163,22 @@ finally
     if atleast(:benchmarks)
         println()
         println("="^78)
-        println("BENCHMARK: posterior mean vs canonical (GLM MLE / lme4 REML)")
+        println("BENCHMARK: posterior mean vs brms, error in units of the brms posterior SD")
         println("samples=$BENCH_SAMPLES total, warmup=$BENCH_WARMUP total, nchains=$BENCH_NCHAINS")
         println("="^78)
-        # crop off: the sleepstudy rows and the rel-err column are the first things the
-        # default terminal-fitting drops, and they are the whole point of the table
-        pretty_table(DataFrame(BENCHMARK_ROWS); column_labels=["model", "param", "ours", "canonical", "abs err", "rel err %"],
+        # No display fitting: the group-level rows and the err/tol columns are the first
+        # things the terminal-fitting drops, and they are the whole point of the table
+        pretty_table(DataFrame(BRMS_ROWS);
+            column_labels=["model", "kind", "param", "ours", "brms", "brms sd", "abs err",
+                           "err (sds)", "tol (sds)", "pass", "brms rhat", "brms ess"],
             fit_table_in_display_horizontally=false, fit_table_in_display_vertically=false)
 
         println()
         println("="^78)
-        println("PREDICTIONS: worst-row epred error vs canonical, against asserted tolerance")
+        println("PREDICTIONS: worst-row epred error vs brms, in brms posterior SDs")
         println("="^78)
-        pretty_table(DataFrame(PRED_ROWS); column_labels=["model", "max abs err", "tol", "headroom"],
+        pretty_table(DataFrame(PRED_ROWS);
+            column_labels=["model", "max err (sds)", "tol (sds)", "headroom", "pass"],
             fit_table_in_display_horizontally=false, fit_table_in_display_vertically=false)
 
         println()
@@ -908,6 +1186,8 @@ finally
         println("FIT TIMINGS: wall-clock seconds per full-budget fit")
         println("First row includes TTFX compile — treat as upper bound")
         println("="^78)
-        pretty_table(DataFrame(TIMING_ROWS); column_labels=["model", "seconds"])
+        pretty_table(DataFrame(TIMING_ROWS); column_labels=["model", "seconds", "brms seconds", "ours/brms"])
+
+        write_benchmark_report()
     end
 end # try

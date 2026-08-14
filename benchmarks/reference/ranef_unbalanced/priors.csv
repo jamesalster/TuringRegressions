@@ -1,0 +1,8 @@
+"model","prior","class","coef","group"
+"ranef_unbalanced","","b","",""
+"ranef_unbalanced","normal(0, 3.354514362)","b","X",""
+"ranef_unbalanced","normal(2.028610363, 8.571972519)","Intercept","",""
+"ranef_unbalanced","student_t(3, 0, 2.5)","sd","",""
+"ranef_unbalanced","","sd","","G"
+"ranef_unbalanced","exponential(0.583296317)","sd","Intercept","G"
+"ranef_unbalanced","exponential(0.583296317)","sigma","",""

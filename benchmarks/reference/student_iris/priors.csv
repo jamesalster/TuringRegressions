@@ -1,0 +1,7 @@
+"model","prior","class","coef","group"
+"student_iris","","b","",""
+"student_iris","normal(0, 0.9381600371)","b","PetalLength",""
+"student_iris","normal(0, 3.799633771)","b","SepalWidth",""
+"student_iris","normal(5.843333333, 4.14033064)","Intercept","",""
+"student_iris","gamma(2, 0.1)","nu","",""
+"student_iris","exponential(1.207633021)","sigma","",""
